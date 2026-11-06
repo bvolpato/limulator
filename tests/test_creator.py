@@ -734,3 +734,62 @@ def test_sudo_shim_preserves_known_native_transport_environment(catalog, tmp_pat
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     assert values["USBMUXD_SOCKET_ADDRESS"] == "UNIX:/tmp/private.sock"
     assert values["VPHONE_RCODESIGN"] == str(catalog.prefix / "bin/rcodesign")
+    result = subprocess.run(
+        [
+            str(tmp_path / "bin/sudo"),
+            "python3",
+            "-c",
+            "import sys,socket; print(sys.executable,socket.AF_VSOCK)",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/usr/bin/python3 40"
+
+
+def test_native_helpers_resolve_distro_python_and_preserve_arguments(catalog, tmp_path, monkeypatch):
+    incompatible = tmp_path / "managed"
+    incompatible.mkdir()
+    (incompatible / "python3").write_text("#!/bin/sh\nexit 71\n")
+    (incompatible / "python3").chmod(0o700)
+    monkeypatch.setenv("PATH", str(incompatible) + os.pathsep + os.environ["PATH"])
+    env = creator._native_env(catalog)
+    original_interpreter = sys.executable
+    creator._sudo_shim(tmp_path / "native-run", env)
+    result = subprocess.run(
+        [
+            "/usr/bin/env",
+            "python3",
+            "-c",
+            "import sys,socket,json; print(json.dumps([sys.executable,socket.AF_VSOCK,sys.argv[1:]]))",
+            "literal with spaces",
+            "$unchanged",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == ["/usr/bin/python3", 40, ["literal with spaces", "$unchanged"]]
+    assert sys.executable == original_interpreter
+    assert stat.S_IMODE((tmp_path / "native-run/bin/python3").stat().st_mode) == 0o700
+
+
+def test_native_python_selection_refuses_existing_file_or_missing_vsock(catalog, tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    python = bindir / "python3"
+    python.write_bytes(b"existing interpreter wrapper")
+    with pytest.raises(FileExistsError):
+        creator._native_python_shim(bindir)
+    assert python.read_bytes() == b"existing interpreter wrapper"
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(creator, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=1))
+    with pytest.raises(RuntimeError, match="AF_VSOCK support"):
+        creator._native_python_shim(empty)
+    assert list(empty.iterdir()) == []

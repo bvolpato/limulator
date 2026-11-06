@@ -725,9 +725,31 @@ class _USBHelpers:
             _sudo(["udevadm", "control", "--reload"], self.env)
 
 
+def _native_python_shim(bindir: Path) -> None:
+    result = _run(
+        [
+            "/usr/bin/python3",
+            "-c",
+            "import socket,sys; sys.exit(0 if getattr(socket,'AF_VSOCK',None)==40 else 1)",
+        ],
+        check=False,
+        timeout=10,
+    )
+    if result.returncode:
+        raise RuntimeError("native creation helpers require /usr/bin/python3 with AF_VSOCK support")
+    fd = os.open(bindir / "python3", os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o700)
+    with os.fdopen(fd, "w") as stream:
+        os.fchmod(stream.fileno(), 0o700)
+        stream.write('#!/bin/sh\nexec /usr/bin/python3 "$@"\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def _sudo_shim(directory: Path, env: dict[str, str]):
     bindir = directory / "bin"
     _private_directory(bindir)
+    _native_python_shim(bindir)
+    env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
     keys = (
         "PATH",
         "LD_LIBRARY_PATH",
@@ -744,7 +766,6 @@ def _sudo_shim(directory: Path, env: dict[str, str]):
         + " + sys.argv[1:])\n"
     )
     shim.chmod(0o700)
-    env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
 
 
 def _completed(vm: Path) -> list[str]:

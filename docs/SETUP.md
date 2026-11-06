@@ -6,6 +6,8 @@ Limulator runs a real iOS research guest on x86_64 Linux. It uses CPU translatio
 
 The native bootstrap targets the Ubuntu 24.04 family, including Linux Mint 22.3. It builds newer Apple USB libraries and Nettle into a private prefix, rather than upgrading the operating system. Rust/Cargo, uv, an NVIDIA Vulkan driver, a user systemd manager, and sudo access are prerequisites. Restore and firmware patching need root access for virtual USB and mounts of the guest images.
 
+Native creation helpers use `/usr/bin/python3` with Linux VSOCK support. Limulator itself supports both the system Python and uv-managed Python; each native run selects the helper interpreter through its own private wrapper.
+
 ```sh
 uv sync --python 3.12
 uv run limulator bootstrap deps
