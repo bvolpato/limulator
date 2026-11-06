@@ -117,6 +117,11 @@
       "path": "patches/0011-bound-dyld-cache-mappings.patch",
       "sha256": "cd60a4da3f332fa01d42ffcf81acfbe3534ad8369062fe0b0aad85e42f778bb7",
       "target": "vphone_cli"
+    },
+    {
+      "path": "patches/0012-first-boot-qmp.patch",
+      "sha256": "399bcf5e71d6de782e814fe0bd665524df19ea46f0fab6bdec3f947e8eeb1e63",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

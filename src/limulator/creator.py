@@ -889,6 +889,16 @@ def _create_locked(
     return _pipeline(paths, candidate, profile, pairing, env, fresh_disk=fresh_disk)
 
 
+def _first_boot_qmp_path(run_dir: Path) -> Path:
+    _private_directory(run_dir)
+    path = run_dir / "qmp.sock"
+    if any(char in str(path) for char in (",", "\n", "\r")):
+        raise ValueError("first-boot QMP path contains characters unsupported by QEMU's socket syntax")
+    if len(os.fsencode(path)) > 103:
+        raise ValueError("first-boot QMP path is too long for a Unix socket; shorten LIMULATOR_HOME")
+    return path
+
+
 def _pipeline(
     paths: Paths,
     candidate: Device,
@@ -910,6 +920,7 @@ def _pipeline(
     _private_directory(vm)
     state = dict(old) if old else {"specification": specification, "completed": []}
     state.pop("error", None)
+    state.pop("first_boot_qmp", None)
     state.update(
         state="creating",
         process=_identity(os.getpid()),
@@ -919,6 +930,7 @@ def _pipeline(
     _atomic_json(state_path, state)
     unit = f"limulator-create-{os.getuid()}-{uuid.uuid4().hex[:8]}.scope"
     run_dir = Path(tempfile.mkdtemp(prefix="create-", dir=vm))
+    state["run_dir"] = str(run_dir)
     env.update(VSOCK="vhost", VSOCK_DIR=str(run_dir / "vsock"), REIMS_VGPU_CENSUS_DIR=str(run_dir / "census"))
     for directory in (run_dir / "vsock", run_dir / "census"):
         _private_directory(directory)
@@ -929,6 +941,10 @@ def _pipeline(
     process = None
     scope_owned = False
     try:
+        qmp_path = _first_boot_qmp_path(run_dir)
+        env["LIMULATOR_FIRST_BOOT_QMP"] = str(qmp_path)
+        state.update(run_dir=str(run_dir), first_boot_qmp=str(qmp_path))
+        _atomic_json(state_path, state)
         catalog = Path.home() / ".cache/vphone"
         ios_file = catalog / profile.main_firmware.filename
         cloud_file = catalog / profile.cloud_os_firmware.filename
@@ -945,6 +961,10 @@ def _pipeline(
         if "LIMULATOR_CREATOR_USB_READY" not in script.read_text():
             raise RuntimeError(
                 "backend lacks the scoped USB creation patch; bootstrap it before creating a guest"
+            )
+        if "LIMULATOR_FIRST_BOOT_QMP" not in script.read_text():
+            raise RuntimeError(
+                "backend lacks the private first-boot QMP hook; bootstrap it before creating a guest"
             )
         baseline = _unit_states()
         state.update(usb_baseline=baseline, scope=unit, run_dir=str(run_dir))

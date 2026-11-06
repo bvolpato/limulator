@@ -45,6 +45,8 @@ uv run limulator --device duo status
 
 Creation verifies firmware hashes, restores a stock cloudOS image to obtain the GPU driver, prepares and patches the iOS firmware, restores the main guest, installs its research components, and waits for an unlocked screen. First boot includes data migration and can take much longer than later starts. Creation logs identify the current stage and can be inspected while the existing process runs. Do not start a second creation just because the current screen or log has not changed recently.
 
+New creation runs expose a private QMP socket during first boot. The local `.limulator-create.json` receipt records its path as `first_boot_qmp`; it belongs to that run and ends with the guest process. This permits GPU framebuffer capture while guest screenshot services are still starting. Existing running guests keep their original launch configuration.
+
 The creator preserves incomplete images and resumes completed stages. It uses a private USB daemon, scoped virtual-device access, and exact process identities. It refuses a conflicting physical Apple device or an existing owner of the guest disk. Never boot the same disk through another launcher while Limulator owns it.
 
 If host verification fails after first boot, rerun the same `create` command. For a matching incomplete, unregistered guest, Limulator preserves the previous stage record and reruns boot and verification while keeping restore and guest installation complete. It refuses this recovery while another process owns the disk. Use `start` for a guest that is already registered.

@@ -2,9 +2,11 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -18,7 +20,6 @@ from limulator.profiles import FirmwareDescriptor, get_profile, list_profiles
 
 @pytest.fixture
 def catalog(tmp_path, monkeypatch):
-    paths = Paths(tmp_path / "data")
     backend = tmp_path / "backend"
     (backend / "setup/data").mkdir(parents=True)
     value = {
@@ -36,7 +37,9 @@ def catalog(tmp_path, monkeypatch):
         creator, "_host_creation_lock", lambda env: creator._lock_transport_file(host_lock, os.getuid())
     )
     monkeypatch.setattr(creator, "_active_vhost_cids", lambda: {})
-    return paths
+    # Keep unrelated pipeline fixtures below the real Unix-socket path limit on CI too.
+    with tempfile.TemporaryDirectory(prefix="lim-cr-", dir="/tmp") as temporary:
+        yield Paths(creator.Path(temporary) / "data")
 
 
 @pytest.mark.parametrize("name", ["../other", "/absolute", "", ".hidden"])
@@ -255,9 +258,10 @@ def test_verification_resume_preserves_state_and_only_reselects_first_boot(catal
     original, inode = disk.read_bytes(), disk.stat().st_ino
     markers = (vm / ".create-state").read_bytes()
     script = catalog.backend / "setup/create-vm.sh"
-    script.write_text("# LIMULATOR_CREATOR_USB_READY\n")
+    script.write_text("# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n")
     monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
     monkeypatch.setattr(creator, "_unit_states", lambda: {})
+    environment = {"LIMULATOR_FIRST_BOOT_QMP": "/tmp/previous-shared-qmp.sock"}
 
     def unavailable(_self):
         raise RuntimeError("pause before native launch")
@@ -266,7 +270,7 @@ def test_verification_resume_preserves_state_and_only_reselects_first_boot(catal
     host_fd = creator._host_creation_lock({})
     try:
         with pytest.raises(RuntimeError, match="pause before native launch"):
-            creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+            creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, environment)
     finally:
         os.close(host_fd)
     receipt = creator._read_json(vm / ".limulator-create.json")
@@ -278,9 +282,116 @@ def test_verification_resume_preserves_state_and_only_reselects_first_boot(catal
     assert creator._completed(vm) == list(creator._STAGES[:-1])
     assert receipt["stage"] == "booted"
     assert receipt["state"] == "error"
+    qmp_path = creator.Path(receipt["first_boot_qmp"])
+    assert qmp_path == creator.Path(receipt["run_dir"]) / "qmp.sock"
+    assert environment["LIMULATOR_FIRST_BOOT_QMP"] == str(qmp_path)
+    assert stat.S_IMODE(qmp_path.parent.stat().st_mode) == 0o700
+    assert qmp_path.parent.stat().st_uid == os.getuid()
     assert disk.read_bytes() == original
     assert disk.stat().st_ino == inode
     assert Registry(catalog).list() == []
+
+
+@pytest.mark.parametrize("component", ["comma,path", "line\nbreak", "carriage\rreturn", "x" * 100])
+def test_first_boot_qmp_rejects_unsupported_socket_paths(tmp_path, component):
+    with pytest.raises(ValueError, match="first-boot QMP path"):
+        creator._first_boot_qmp_path(tmp_path / component)
+
+
+def test_long_first_boot_socket_path_fails_before_native_work_and_records_safe_error(catalog, monkeypatch):
+    paths = Paths(catalog.data / ("long-data-" * 12))
+    candidate, receipt = _incomplete_vm(paths)
+    vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
+    original, inode = disk.read_bytes(), disk.stat().st_ino
+    markers = (vm / ".create-state").read_bytes()
+    receipt["first_boot_qmp"] = "/tmp/previous-run/qmp.sock"
+    creator._atomic_json(vm / ".limulator-create.json", receipt)
+    monkeypatch.setattr(
+        creator, "_verified_firmware_stage", lambda *args: pytest.fail("firmware work must not begin")
+    )
+    monkeypatch.setattr(creator._USBHelpers, "start", lambda self: pytest.fail("USB setup must not begin"))
+    monkeypatch.setattr(creator._USBHelpers, "close", lambda self: None)
+    monkeypatch.setattr(creator.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("no native launch"))
+    with pytest.raises(ValueError, match="shorten LIMULATOR_HOME"):
+        creator._pipeline(paths, candidate, get_profile("iphone-duo"), {}, {})
+    result = creator._read_json(vm / ".limulator-create.json")
+    assert result["state"] == "error"
+    assert "shorten LIMULATOR_HOME" in result["error"]
+    assert "first_boot_qmp" not in result
+    assert result["completed"] == creator._completed(vm)
+    assert creator.Path(result["run_dir"]).parent == vm
+    assert disk.read_bytes() == original
+    assert disk.stat().st_ino == inode
+    assert (vm / ".create-state").read_bytes() == markers
+
+
+@pytest.fixture
+def patched_first_boot(tmp_path):
+    source = Paths().backend / "setup/create-vm.sh"
+    if not source.is_file():
+        pytest.skip("the external vphone-linux setup source is required")
+    target = tmp_path / "setup/create-vm.sh"
+    target.parent.mkdir()
+    target.write_bytes(source.read_bytes())
+    patch = creator.Path(__file__).resolve().parents[1] / "patches/0012-first-boot-qmp.patch"
+    check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=tmp_path, capture_output=True)
+    if check.returncode == 0:
+        subprocess.run(["git", "apply", str(patch)], cwd=tmp_path, check=True, capture_output=True)
+    else:
+        subprocess.run(
+            ["git", "apply", "--reverse", "--check", str(patch)],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+    result = re.search(r"^boot_vm\(\) \{.*?^\}", target.read_text(), re.MULTILINE | re.DOTALL)
+    assert result is not None
+    return result.group()
+
+
+@pytest.mark.parametrize("qmp,already_running", [(False, False), (True, False), (True, True)])
+def test_first_boot_qmp_is_optional_and_never_restarts_an_existing_guest(
+    tmp_path, patched_first_boot, qmp, already_running
+):
+    vm = tmp_path / "VM with spaces"
+    vm.mkdir()
+    arguments = tmp_path / "recorded-arguments"
+    arguments.write_bytes(b"not launched")
+    launcher = tmp_path / "fake run-vphone.sh"
+    launcher.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$ARG_LOG"\n')
+    launcher.chmod(0o700)
+    socket = tmp_path / "private run $(literal); path" / "qmp.sock"
+    env = os.environ | {
+        "VM": str(vm),
+        "QEMU_RUN": str(launcher),
+        "QEMU_PIDFILE": str(vm / ".qemu.pid"),
+        "ARG_LOG": str(arguments),
+        "CID": "41",
+        "GFX": "1",
+        "WINDOW": "0",
+    }
+    env.pop("LIMULATOR_FIRST_BOOT_QMP", None)
+    if qmp:
+        env["LIMULATOR_FIRST_BOOT_QMP"] = str(socket)
+    script = (
+        "set -Eeuo pipefail\n"
+        "log() { :; }\n"
+        "die() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        "vphoned_up() { return 0; }\n"
+        f"running_vm() {{ QEMU_PID=987654; return {0 if already_running else 1}; }}\n"
+        + patched_first_boot
+        + "\nboot_vm\n"
+        + ("" if already_running else 'wait "$QEMU_PID"\n')
+    )
+    subprocess.run(["bash"], input=script, env=env, text=True, check=True, capture_output=True, timeout=5)
+    if already_running:
+        assert arguments.read_bytes() == b"not launched"
+    else:
+        actual = arguments.read_bytes().split(b"\0")[:-1]
+        expected = [str(vm)]
+        if qmp:
+            expected += ["-qmp", f"unix:{socket},server=on,wait=off"]
+        assert actual == [os.fsencode(value) for value in expected]
 
 
 @pytest.mark.parametrize("refusal", ["registered", "mismatched", "ready", "missing-cfw"])
@@ -446,7 +557,7 @@ def test_prelaunch_failure_preserves_disk_and_rolls_back_explicit_recovery(catal
     config = (vm / "config.plist").read_bytes()
     previous_receipt = (vm / ".limulator-create.json").read_bytes()
     script = catalog.backend / "setup/create-vm.sh"
-    script.write_text("# LIMULATOR_CREATOR_USB_READY\n")
+    script.write_text("# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n")
     monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
     monkeypatch.setattr(creator, "_unit_states", lambda: {})
 

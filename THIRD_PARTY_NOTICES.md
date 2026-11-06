@@ -6,7 +6,7 @@ Repositories, revisions, patch targets, and patch hashes are recorded in [third_
 
 ## vphone-linux
 
-The backend launcher, tools, and Linux build/edit rules modified by patches 0001–0005, 0007, 0009, and 0010 come from [vphone-linux at c2dc1996c8398ddb994288a29a719360f354d268](https://github.com/YahiaAngelo/vphone-linux/tree/c2dc1996c8398ddb994288a29a719360f354d268).
+The backend launcher, tools, and Linux build/edit rules modified by patches 0001–0005, 0007, 0009, 0010, and 0012 come from [vphone-linux at c2dc1996c8398ddb994288a29a719360f354d268](https://github.com/YahiaAngelo/vphone-linux/tree/c2dc1996c8398ddb994288a29a719360f354d268).
 
 Its notice is `Copyright (c) 2026 Yahia`, under the MIT License. The complete notice, permission text, disclaimer, and repository-scope statement are retained in [LICENSES/vphone-linux-MIT.txt](LICENSES/vphone-linux-MIT.txt), copied from the [pinned LICENSE](https://github.com/YahiaAngelo/vphone-linux/blob/c2dc1996c8398ddb994288a29a719360f354d268/LICENSE).
 
