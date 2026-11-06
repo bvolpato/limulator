@@ -2,7 +2,7 @@
 
 Run an iPhone app built with xtool on a local Linux workstation. Install the app into a real iOS guest, interact with it, capture its screen, and run repeatable checks from the terminal or a local web console.
 
-Development status: app compilation, host protocols, lifecycle safeguards, and the console have local validation. The native iOS restore has completed; guest setup and first boot are in progress. Native app execution, interaction, and screenshots on this workstation remain unverified.
+Development status: app compilation, host protocols, lifecycle safeguards, and the console have local validation. The iOS 27.1 restore and research guest installation are complete; normal first boot and data migration are in progress. The guest health endpoint reports setup pending, while device metadata has not yet returned. Native app execution, input, persistence, software postures, app performance, and usable guest screenshots remain unverified.
 
 Limulator uses an emulated ARM64 iPhone. UIKit and SwiftUI run inside iOS; the console displays frames from that guest. A remote Mac and replacement web UI are not the execution path.
 

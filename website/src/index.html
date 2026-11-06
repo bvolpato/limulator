@@ -53,7 +53,7 @@
             <a class="button button-dark" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#evidence">Check what is verified <span aria-hidden="true">↘</span></a>
           </div>
-          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>native runtime validation in progress</span></p>
+          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>guest first boot in progress</span></p>
         </div>
 
         <div class="hero-visual" data-hero-visual aria-label="Conceptual diagram of the active iPhone Duo cover-display profile">
@@ -82,7 +82,7 @@
             </figure>
           </div>
           <div class="visual-footer">
-            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>Transport -256</span></span>
+            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>First boot in progress</span></span>
             <span><span data-hero-guest-device>iPhone Duo</span> · <span data-hero-guest-os>iOS 27.1</span></span>
           </div>
           <div class="visual-caption" data-hero-visual-caption><span>PROFILE GEOMETRY</span><span>NOT A NATIVE CAPTURE</span></div>
@@ -92,7 +92,7 @@
       <section class="signal-strip" aria-label="Current project status">
         <div class="signal-inner wrap">
           <div class="signal-intro"><span class="signal-cross" aria-hidden="true">+</span><span>WHERE THE WORK STANDS</span></div>
-          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>Duo guest</span><strong data-status-value>Transport -256</strong><span class="signal-state" data-guest-os>iOS 27.1</span></div>
+          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>Duo guest</span><strong data-status-value>First boot in progress</strong><span class="signal-state" data-guest-os>iOS 27.1</span></div>
           <div class="signal-item" data-status="sample"><span class="signal-label">CounterLab</span><strong data-status-value>IPA built</strong><span class="signal-state">SDK 27.2</span></div>
           <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>Next validation</strong><span class="signal-state">Not yet verified</span></div>
         </div>
@@ -139,7 +139,7 @@
             <span class="step-state" data-workflow-step="capture">Not yet captured</span>
           </article>
         </div>
-        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>Debug and release sample IPAs build with SDK 27.2. Native restore is complete; guest setup and first boot precede the app checks.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
+        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>Debug and release sample IPAs build with SDK 27.2. The iOS restore and research guest installation are complete; normal first boot and data migration are in progress before native app checks.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
       </section>
 
       <section id="profiles" class="profile-section" aria-labelledby="profiles-title">
@@ -197,7 +197,7 @@
                   </div>
                 </div>
               </div>
-              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>Restoring · native behavior not verified</span></span><span data-profile-evidence>Profile 01 / 03</span></div>
+              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>First boot and data migration in progress; native app behavior remains unverified.</span></span><span data-profile-evidence>Profile 01 / 03</span></div>
             </div>
           </div>
         </div>
@@ -238,16 +238,16 @@
           </article>
           <article class="proof-column proof-progress">
             <span class="proof-mark" aria-hidden="true"><i></i></span>
-            <p class="proof-label" data-proof-label="guest">TRANSPORT RECOVERY</p>
+            <p class="proof-label" data-proof-label="guest">FIRST BOOT IN PROGRESS</p>
             <h3>Duo / iOS 27.1 guest</h3>
-            <p>Filesystem restore completed; the guest transport handoff returned error -256. Native boot and app execution remain unverified.</p>
-            <span class="proof-state" data-proof-state="guest">Transport -256</span>
+            <p>The iOS 27.1 restore and research guest installation are complete. Normal first boot and data migration are in progress.</p>
+            <span class="proof-state" data-proof-state="guest">Guest health: setup pending</span>
           </article>
           <article class="proof-column proof-next">
             <span class="proof-mark" aria-hidden="true"><span></span></span>
             <p class="proof-label" data-proof-label="runtime">NEXT PROOF</p>
             <h3>Install through capture</h3>
-            <p>Launch, native input, persistence, guest screenshots, and open / book / closed checks.</p>
+            <p>CounterLab install, launch, native input, persistence, usable screenshots, software postures and app performance.</p>
             <span class="proof-state" data-proof-state="runtime">Not yet verified</span>
           </article>
         </div>
@@ -349,7 +349,7 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>Is the Duo app workflow already proven?<span aria-hidden="true">+</span></summary>
-              <p data-faq-runtime>Debug and release CounterLab IPAs build with SDK 27.2. The iOS restore completed successfully; native boot, app install, launch, input, persistence and screenshots are still being validated.</p>
+              <p data-faq-runtime>Debug and release CounterLab IPAs build with SDK 27.2. The iOS 27.1 restore and research guest installation are complete; normal first boot and data migration are underway. CounterLab install, launch, input, persistence, software postures and usable screenshots remain unverified.</p>
             </details>
             <details>
               <summary>Can I use any iPhone, iPad, or App Store app?<span aria-hidden="true">+</span></summary>

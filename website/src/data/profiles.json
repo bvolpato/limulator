@@ -3,9 +3,9 @@
     {
       "id": "duo",
       "label": "iPhone Duo",
-      "badge": "Active research target",
+      "badge": "First boot in progress",
       "state": "active",
-      "validation": "Native iOS restore completed. Guest setup and first boot are next; app execution, software postures and touch behavior remain unverified.",
+      "validation": "Restore and research guest installation are complete. Normal first boot and data migration are in progress; native app behavior remains unverified.",
       "diagram": "cover",
       "form": "Cover framebuffer · experimental inner display",
       "device": "iPhone Duo",
@@ -17,7 +17,7 @@
       "dimensions": "1398 × 2034 px",
       "innerDisplay": "2007 × 2853 px @ 3×",
       "postures": "Closed · book · open (software)",
-      "note": "Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer. Software postures are available, but native layout, touch and runtime behavior remain unverified. The physical hinge and second physical scanout are outside this emulation.",
+      "note": "Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer, with software postures. Native layout, touch and runtime behavior remain unverified. The physical hinge and second physical scanout are outside this emulation.",
       "source": "Active guest configuration"
     },
     {

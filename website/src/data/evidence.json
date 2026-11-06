@@ -2,19 +2,19 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "Native runtime validation in progress",
+    "detail": "Guest first boot in progress",
     "publicStatus": "Source is public. Native app validation is still in progress."
   },
   "guest": {
-    "label": "Duo guest creation",
-    "status": "customizing",
-    "value": "iOS restored",
+    "label": "Duo guest first boot",
+    "status": "first-boot-in-progress",
+    "value": "First boot in progress",
     "device": "iPhone Duo",
     "os": "iOS 27.1",
-    "workflowValue": "Guest components installing",
-    "proofLabel": "NATIVE VALIDATION",
-    "proofValue": "Native restore completed",
-    "detail": "The native restore finished successfully with iOS 27.1 (24A94425). Research guest components are installing; app execution and native frames await first boot."
+    "workflowValue": "First boot and migration",
+    "proofLabel": "FIRST BOOT IN PROGRESS",
+    "proofValue": "Restore and research guest install complete",
+    "detail": "The iOS 27.1 restore and research guest installation are complete. Normal first boot and data migration are in progress. Guest health reports setup pending; device information remains unavailable."
   },
   "sample": {
     "label": "CounterLab · SDK 27.2",
@@ -25,14 +25,14 @@
   "runtime": {
     "label": "Native runtime proof",
     "status": "pending",
-    "value": "Next validation",
-    "proofLabel": "NEXT VALIDATION",
-    "workflowValue": "Native boot validation pending",
-    "captureValue": "Native capture pending",
-    "detail": "Native boot, app install, launch, input, persistence and screenshot checks are the acceptance gates after restoration.",
-    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. The iOS restore completed successfully; native boot, app install, launch, input, persistence and screenshots are still being validated."
+    "value": "App checks pending",
+    "proofLabel": "RUNTIME VALIDATION",
+    "workflowValue": "CounterLab app checks pending",
+    "captureValue": "Native app capture pending",
+    "detail": "CounterLab app installation, launch, input, persistence, usable guest screenshots, software posture behavior, and app-performance checks remain unverified.",
+    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. The iOS 27.1 restore and research guest installation are complete; normal first boot and data migration are underway. CounterLab install, launch, input, persistence, software postures, usable screenshots and app-performance checks remain unverified."
   },
-  "workflowNote": "Debug and release sample IPAs build with SDK 27.2. Native restore is complete; guest setup and first boot precede the app checks.",
+  "workflowNote": "Debug and release sample IPAs build with SDK 27.2. The iOS restore and research guest installation are complete; normal first boot and data migration are in progress before native app checks.",
   "faq": {
     "release": "The source repository is public as a research preview. Native app execution and device profiles are still being validated; public source availability does not establish runtime compatibility."
   },
