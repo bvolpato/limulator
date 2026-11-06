@@ -14,6 +14,7 @@ struct CounterLabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var note = ""
     @State private var deviceMetrics: DeviceMetrics?
+    @State private var metricsRefreshID = 0
     @State private var networkStatus = NetworkStatus.idle
 
     var body: some View {
@@ -35,11 +36,16 @@ struct CounterLabView: View {
             }
             .navigationTitle("Counter Lab")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear(perform: refreshDeviceMetrics)
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
-                    refreshDeviceMetrics()
-                }
+        }
+        .background {
+            WindowSceneScreenProbe(refreshID: metricsRefreshID, onScreenChange: refreshDeviceMetrics(from:))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                metricsRefreshID &+= 1
             }
         }
     }
@@ -271,14 +277,8 @@ struct CounterLabView: View {
         )
     }
 
-    private func refreshDeviceMetrics() {
-        guard let screen = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })?.screen
-        else {
-            return
-        }
-
+    private func refreshDeviceMetrics(from screen: UIScreen?) {
+        guard let screen else { return }
         let idiom = UIDevice.current.userInterfaceIdiom
         let idiomName: String
         switch idiom {
@@ -300,11 +300,13 @@ struct CounterLabView: View {
             idiomName = "Unknown"
         }
 
-        deviceMetrics = DeviceMetrics(
+        let metrics = DeviceMetrics(
             idiom: idiomName,
             pointSize: "\(Int(screen.bounds.width.rounded())) × \(Int(screen.bounds.height.rounded())) pt",
             displayScale: "\(screen.scale.formatted())×"
         )
+        guard metrics != deviceMetrics else { return }
+        deviceMetrics = metrics
     }
 
     private func checkNetworkConnection() {
@@ -336,10 +338,88 @@ struct CounterLabView: View {
     }
 }
 
-private struct DeviceMetrics {
+private struct DeviceMetrics: Equatable {
     let idiom: String
     let pointSize: String
     let displayScale: String
+}
+
+private struct WindowSceneScreenProbe: UIViewRepresentable {
+    let refreshID: Int
+    let onScreenChange: (UIScreen?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WindowSceneScreenProbeView {
+        let view = WindowSceneScreenProbeView()
+        view.isUserInteractionEnabled = false
+        view.onScreenChange = onScreenChange
+        return view
+    }
+
+    func updateUIView(_ uiView: WindowSceneScreenProbeView, context: Context) {
+        uiView.onScreenChange = onScreenChange
+        let forceRefresh = context.coordinator.lastRefreshID != refreshID
+        context.coordinator.lastRefreshID = refreshID
+        uiView.refresh(force: forceRefresh)
+    }
+
+    static func dismantleUIView(_ uiView: WindowSceneScreenProbeView, coordinator: Coordinator) {
+        uiView.onScreenChange = nil
+    }
+
+    final class Coordinator {
+        var lastRefreshID: Int?
+    }
+}
+
+private final class WindowSceneScreenProbeView: UIView {
+    var onScreenChange: ((UIScreen?) -> Void)?
+
+    private var lastSnapshot: ScreenSnapshot?
+    private var deliveryScheduled = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        refresh(force: true)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        refresh(force: false)
+    }
+
+    func refresh(force: Bool) {
+        let scene = window?.windowScene
+        let screen = scene?.screen
+        let snapshot = ScreenSnapshot(
+            sceneID: scene.map(ObjectIdentifier.init),
+            screenID: screen.map(ObjectIdentifier.init),
+            screenBounds: screen?.bounds,
+            screenScale: screen?.scale,
+            viewportBounds: bounds
+        )
+        guard force || snapshot != lastSnapshot else { return }
+        lastSnapshot = snapshot
+        guard !deliveryScheduled else { return }
+        deliveryScheduled = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.deliveryScheduled = false
+            self.onScreenChange?(self.window?.windowScene?.screen)
+        }
+    }
+
+    private struct ScreenSnapshot: Equatable {
+        let sceneID: ObjectIdentifier?
+        let screenID: ObjectIdentifier?
+        let screenBounds: CGRect?
+        let screenScale: CGFloat?
+        let viewportBounds: CGRect
+    }
 }
 
 private enum NetworkStatus: Equatable {
