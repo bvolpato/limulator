@@ -3,6 +3,7 @@ name = "limulator"
 version = "0.1.0"
 description = "Run, inspect, and test iPhone apps on Linux with a local iOS guest."
 readme = "README.md"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "LICENSES/*"]
 requires-python = ">=3.12"
 dependencies = ["fastapi", "uvicorn", "python-multipart", "pillow"]
 

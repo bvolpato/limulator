@@ -26,3 +26,7 @@ VM disks, firmware, SDKs, apps, private keys, and screenshots are local data and
 ## Credits
 
 The execution stack is the work of vphone-linux, vphone-cli, ChefKiss/QEMU, Reims vGPU, and metal2vulkan contributors. Limulator supplies the Linux workflow, lifecycle management, console, and test interfaces around those components. Each dependency retains its own license; see [the upstream license matrix](https://github.com/YahiaAngelo/vphone-linux/blob/main/docs/LICENSING.md).
+
+## License
+
+Limulator's original code is available under the [MIT License](LICENSE). Derived patches and the SMC benchmark retain their upstream licenses and notices, listed in [the third-party notices](THIRD_PARTY_NOTICES.md). Apple firmware, SDKs, and guest disks are not included.
