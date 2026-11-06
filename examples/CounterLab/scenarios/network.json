@@ -1,9 +1,12 @@
 {
   "version": 1,
   "steps": [
+    {"action": "terminate", "bundle_id": "com.bvolpato.limulator.counterlab"},
     {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
     {"action": "wait_text", "text": "Counter Lab", "timeout": 120},
+    {"action": "scroll_to_element", "identifier": "counterlab.network.check"},
     {"action": "tap_element", "identifier": "counterlab.network.check"},
+    {"action": "scroll_to_element", "identifier": "counterlab.network.status", "direction": "up"},
     {"action": "wait_text", "text": "HTTP 200", "identifier": "counterlab.network.status", "timeout": 60},
     {"action": "screenshot", "name": "01-https-connected.png"}
   ]

@@ -27,6 +27,7 @@ class FakeService:
         fail_action: str | None = None,
         fail_capture: bool = False,
         tree_delay: float = 0,
+        screen: dict[str, Any] | None = None,
     ) -> None:
         self.inputs: list[tuple[str, tuple[Any, ...]]] = []
         self.capture_paths: list[Path | None] = []
@@ -36,6 +37,8 @@ class FakeService:
         self.tree_delay = tree_delay
         self.fail_action = fail_action
         self.fail_capture = fail_capture
+        self.screen_info = screen if screen is not None else {"width": 100, "height": 150, "scale": 2}
+        self.screen_timeouts: list[float] = []
 
     def _input(self, name: str, *args: Any) -> dict[str, Any]:
         self.inputs.append((name, args))
@@ -54,12 +57,20 @@ class FakeService:
         return FakeFrame()
 
     def tree(self, timeout: float = 60) -> Any:
+        if self.fail_action == "tree":
+            raise RuntimeError("native AX transport failed")
         self.tree_timeouts.append(timeout)
         if self.tree_delay:
             threading.Event().wait(self.tree_delay)
         value = self.trees[min(self.tree_calls, len(self.trees) - 1)]
         self.tree_calls += 1
         return value
+
+    def screen(self, timeout: float = 60) -> dict:
+        self.screen_timeouts.append(timeout)
+        if self.fail_action == "screen":
+            raise RuntimeError("native screen transport failed")
+        return self.screen_info
 
     def launch(self, *args: Any) -> dict[str, Any]:
         return self._input("launch", *args)
@@ -358,6 +369,223 @@ def test_tap_element_requires_and_dispatches_semantic_identifier(tmp_path: Path)
 
     assert service.inputs == [("tap_element", ("counterlab.reset",))]
     assert report["steps"][0]["status"] == "passed"
+
+
+def _ax_target(*, identifier="target", x=50, y=75, visible=True):
+    return {
+        "source": "ax",
+        "elements": [{"identifier": identifier, "visible": visible, "x": x, "y": y}],
+        "truncated": False,
+    }
+
+
+def test_scroll_reveals_offscreen_target_then_keeps_tap_semantic(tmp_path, monkeypatch):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+    service = FakeService(trees=[_ax_target(visible=False), _ax_target()])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target"},
+                {"action": "tap_element", "identifier": "target"},
+            ],
+        },
+    )
+    report = run_scenario(service, path, tmp_path / "scroll-success")
+    assert service.inputs == [
+        ("swipe", (99.5, 233.22, 99.5, 95.68, 350, "200x300:0")),
+        ("tap_element", ("target",)),
+    ]
+    result = report["steps"][0]["result"]
+    assert result["swipes"] == 1
+    assert result["activation_point"] == {"x": 50, "y": 75, "units": "points"}
+    assert result["screen_points"] == {"width": 100, "height": 150}
+    assert service.capture_paths[0] is None
+    assert all(0 < timeout <= 30 for timeout in service.screen_timeouts + service.tree_timeouts)
+
+
+def test_scroll_uses_guest_point_bounds_instead_of_framebuffer_pixels(tmp_path, monkeypatch):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+    service = FakeService(trees=[_ax_target(x=120), _ax_target()])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target", "direction": "up"},
+            ],
+        },
+    )
+    report = run_scenario(service, path, tmp_path / "point-bounds")
+    assert report["steps"][0]["result"]["swipes"] == 1
+    assert service.inputs == [("swipe", (99.5, 95.68, 99.5, 233.22, 350, "200x300:0"))]
+
+
+def test_scroll_absence_stops_at_swipe_limit_with_failure_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+    service = FakeService(trees=[_ax_target(identifier="another")])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target", "max_swipes": 2},
+            ],
+        },
+    )
+    with pytest.raises(ScenarioError, match="exhausted 2 down swipes: target is not visible") as error:
+        run_scenario(service, path, tmp_path / "absent")
+    assert [name for name, args in service.inputs] == ["swipe", "swipe"]
+    report = json.loads(error.value.report_path.read_text())
+    assert report["failure"]["step"] == 1
+    assert report["screenshots"][0]["role"] == "failure"
+
+
+def test_scroll_recaptures_geometry_before_each_swipe(tmp_path, monkeypatch):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+
+    class ResizedFrame(FakeFrame):
+        width = 400
+        height = 180
+        identity = "400x180:0"
+
+    class ResizingService(FakeService):
+        def capture(self, output=None):
+            frame = super().capture(output)
+            return ResizedFrame() if self.capture_paths.count(None) >= 2 else frame
+
+    service = ResizingService(trees=[_ax_target(visible=False), _ax_target(visible=False), _ax_target()])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target"},
+            ],
+        },
+    )
+    report = run_scenario(service, path, tmp_path / "resized-scroll")
+    first, second = [args for name, args in service.inputs if name == "swipe"]
+    assert first[:5] == pytest.approx((99.5, 233.22, 99.5, 95.68, 350))
+    assert second[:5] == pytest.approx((199.5, 139.62, 199.5, 57.28, 350))
+    assert (first[-1], second[-1]) == ("200x300:0", "400x180:0")
+    assert report["steps"][0]["result"]["swipes"] == 2
+
+
+def test_scroll_does_not_swipe_after_a_capture_exceeds_the_deadline(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: clock[0])
+
+    class SlowCapture(FakeService):
+        def capture(self, output=None):
+            clock[0] += 0.2
+            return super().capture(output)
+
+    service = SlowCapture(trees=[_ax_target(visible=False)])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target", "timeout": 0.1},
+            ],
+        },
+    )
+    with pytest.raises(ScenarioError, match="timed out after 0 down swipes"):
+        run_scenario(service, path, tmp_path / "capture-budget")
+    assert service.inputs == []
+
+
+def test_scroll_never_accepts_a_late_match(tmp_path):
+    service = FakeService(trees=[_ax_target()], tree_delay=0.05)
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target", "timeout": 0.01},
+            ],
+        },
+    )
+    with pytest.raises(ScenarioError, match="timed out after 0 down swipes"):
+        run_scenario(service, path, tmp_path / "late-scroll")
+    assert service.inputs == []
+
+
+@pytest.mark.parametrize("failure", ["tree", "screen", "swipe"])
+def test_scroll_propagates_non_target_failures_without_retry(tmp_path, failure):
+    service = FakeService(trees=[_ax_target(identifier="another")], fail_action=failure)
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target"},
+            ],
+        },
+    )
+    expected = (
+        "swipe failed in fake service"
+        if failure == "swipe"
+        else f"native {'AX' if failure == 'tree' else 'screen'} transport failed"
+    )
+    with pytest.raises(ScenarioError, match=expected):
+        run_scenario(service, path, tmp_path / "rpc-error")
+    assert len(service.inputs) <= 1
+
+
+@pytest.mark.parametrize(
+    "tree,message",
+    [
+        ({"error": "AX element query failed (-25215)"}, "AX element query failed"),
+        ({"source": "ax", "elements": [], "truncated": True}, "was truncated"),
+        (_ax_target(x=float("nan")), "invalid activation point"),
+    ],
+)
+def test_scroll_refuses_invalid_accessibility_evidence(tmp_path, tree, message):
+    service = FakeService(trees=[tree])
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "scroll_to_element", "identifier": "target"},
+            ],
+        },
+    )
+    with pytest.raises(ScenarioError, match=message):
+        run_scenario(service, path, tmp_path / "invalid-ax")
+    assert service.inputs == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"max_swipes": True},
+        {"max_swipes": -1},
+        {"max_swipes": 13},
+        {"direction": "left"},
+        {"timeout": 0},
+        {"timeout": 121},
+        {"identifier": ""},
+    ],
+)
+def test_scroll_inputs_validate_before_any_action(tmp_path, fields):
+    path = _write_scenario(
+        tmp_path,
+        {
+            "version": 1,
+            "steps": [
+                {"action": "launch", "bundle_id": "com.example.App"},
+                {"action": "scroll_to_element", "identifier": "target", **fields},
+            ],
+        },
+    )
+    service = FakeService()
+    with pytest.raises(ScenarioError):
+        run_scenario(service, path, tmp_path / "invalid-scroll")
+    assert service.inputs == []
 
 
 def test_output_directory_is_stable_and_never_overwritten(tmp_path: Path) -> None:

@@ -119,4 +119,16 @@ uv run limulator test examples/CounterLab/scenarios/duo.json --output artifacts/
 
 Each run requires a new output directory. It writes `report.json` and genuine guest PNGs with hashes. A failed assertion produces a failing command and attempts a failure capture. If capture itself fails, the report records the error without inventing an image.
 
+Semantic taps only select visible accessibility elements. To reach a control below the viewport, add an explicit scroll action before its tap:
+
+```json
+{"action": "scroll_to_element", "identifier": "counterlab.details.link", "direction": "down", "max_swipes": 6, "timeout": 30}
+```
+
+`direction` is `down` toward later content or `up` toward earlier content. It defaults to `down`; `max_swipes` defaults to 6 and accepts integers from 0 through 12; `timeout` defaults to 30 seconds and must be positive and at most 120 seconds. The action queries the guest's flat AX snapshot and `device.screen` point bounds. It accepts the exact identifier only when visible with an activation point inside those bounds. It captures a fresh framebuffer before each proportional swipe. It does not tap the target, retry transport failures, or infer UIKit point bounds from profile pixels. Reports include the swipe count, activation point, and daemon-reported point bounds.
+
+`device.screen` uses the same IcliKit interface metrics as accessibility visibility and semantic tap validation. These metrics come from the UIKit screen capture and SpringBoard orientation, with a fallback to the main panel. They do not establish an experimental Duo inner window's UIKit geometry; that mapping still needs native verification.
+
+The search deadline is checked between the existing bounded capture and swipe operations and before accepting a match. An in-flight capture or swipe can finish after that deadline, at which point the action fails. A missing target fails at the swipe limit or deadline and attempts the usual failure capture. Use a separate `tap_element` action after scrolling; use an upward scroll to return to the counter after visiting lower cards.
+
 The smoke scenario checks a specific counter value, native text input, navigation, and count persistence after relaunch. The Duo scenario checks the counter across cover, book, and open states. A passing host-side unit suite alone does not establish that either native scenario works; native results must come from a running guest.

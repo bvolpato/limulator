@@ -163,6 +163,25 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
         elif action == "tap_element":
             required, optional = {"identifier"}, set()
             call = {"identifier": _string(step.get("identifier"), f"step {index} identifier", maximum=1024)}
+        elif action == "scroll_to_element":
+            required, optional = {"identifier"}, {"direction", "max_swipes", "timeout"}
+            direction = step.get("direction", "down")
+            if direction not in ("down", "up"):
+                raise ValueError(f"step {index} scroll direction must be down or up")
+            max_swipes = step.get("max_swipes", 6)
+            if type(max_swipes) is not int or not 0 <= max_swipes <= 12:
+                raise ValueError(f"step {index} max_swipes must be an integer between 0 and 12")
+            timeout = _number(step.get("timeout", 30), f"step {index} timeout")
+            if not 0 < timeout <= 120:
+                raise ValueError(
+                    f"step {index} scroll timeout must be greater than 0 and at most 120 seconds"
+                )
+            call = {
+                "identifier": _string(step.get("identifier"), f"step {index} identifier", maximum=1024),
+                "direction": direction,
+                "max_swipes": max_swipes,
+                "timeout": timeout,
+            }
         elif action == "tap":
             required, optional = {"x", "y"}, set()
             call = {key: _number(step.get(key), f"step {index} {key}") for key in ("x", "y")}
@@ -472,6 +491,102 @@ def _finish_failure(
     return ScenarioError(f"{report['failure']['error']} (report: {report_path})", report_path=report_path)
 
 
+def _scroll_target(tree: Any, identifier: str, width: float, height: float) -> tuple[dict | None, str]:
+    if isinstance(tree, dict) and tree.get("error"):
+        raise ScenarioError(f"Guest accessibility query failed: {tree['error']}")
+    if not isinstance(tree, dict) or tree.get("source") != "ax" or not isinstance(tree.get("elements"), list):
+        raise ScenarioError("scroll_to_element requires the guest's flat AX elements snapshot")
+    if tree.get("truncated") is True:
+        raise ScenarioError(
+            "Guest accessibility query was truncated; refusing to scroll with incomplete evidence"
+        )
+    matches = []
+    for element in tree["elements"]:
+        if not isinstance(element, dict):
+            raise ScenarioError("Guest accessibility query returned a non-object element")
+        if element.get("identifier") == identifier and element.get("visible") is True:
+            matches.append(element)
+    if len(matches) > 1:
+        raise ScenarioError(f"Accessibility identifier is ambiguous: {identifier!r}")
+    if not matches:
+        return None, "target is not visible"
+    target = matches[0]
+    try:
+        x, y = _number(target.get("x"), "AX activation x"), _number(target.get("y"), "AX activation y")
+    except ValueError as error:
+        raise ScenarioError(
+            f"Guest returned an invalid activation point for {identifier!r}: {error}"
+        ) from error
+    if not (0 <= x < width and 0 <= y < height):
+        return None, f"activation point ({x:g}, {y:g}) is outside {width:g} by {height:g} guest points"
+    return {"x": x, "y": y, "units": "points"}, "target is visible"
+
+
+def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
+    started = time.monotonic()
+    deadline = started + action["timeout"]
+    swipes = 0
+    reason = "target has not been queried"
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ScenarioError(
+                f"scroll_to_element {action['identifier']!r} timed out after {swipes} "
+                f"{action['direction']} swipes: {reason}"
+            )
+        return value
+
+    while True:
+        screen = service.screen(timeout=remaining())
+        if not isinstance(screen, dict):
+            raise ScenarioError("Guest device.screen response must be an object")
+        try:
+            width, height = (
+                _number(screen.get("width"), "guest point width"),
+                _number(screen.get("height"), "guest point height"),
+            )
+        except ValueError as error:
+            raise ScenarioError(f"Guest returned invalid screen bounds: {error}") from error
+        if width <= 0 or height <= 0:
+            raise ScenarioError("Guest screen point bounds must be positive")
+        target, reason = _scroll_target(
+            service.tree(timeout=remaining()), action["identifier"], width, height
+        )
+        remaining()
+        if target:
+            return {
+                "identifier": action["identifier"],
+                "direction": action["direction"],
+                "swipes": swipes,
+                "activation_point": target,
+                "screen_points": {"width": width, "height": height},
+                "elapsed_seconds": max(0.0, time.monotonic() - started),
+            }
+        if swipes >= action["max_swipes"]:
+            raise ScenarioError(
+                f"scroll_to_element {action['identifier']!r} exhausted {swipes} "
+                f"{action['direction']} swipes: {reason}"
+            )
+        frame = service.capture()
+        remaining()
+        if (
+            type(frame.width) is not int
+            or type(frame.height) is not int
+            or frame.width <= 0
+            or frame.height <= 0
+            or not isinstance(frame.identity, str)
+            or not frame.identity
+        ):
+            raise ScenarioError("Guest capture returned invalid viewport geometry for scrolling")
+        x = (frame.width - 1) * 0.5
+        lower, upper = (frame.height - 1) * 0.78, (frame.height - 1) * 0.32
+        y0, y1 = (lower, upper) if action["direction"] == "down" else (upper, lower)
+        service.swipe(x, y0, x, y1, 350, frame.identity)
+        swipes += 1
+        time.sleep(min(0.25, remaining()))
+
+
 def _execute_action(
     service: DeviceService,
     action: dict[str, Any],
@@ -482,6 +597,8 @@ def _execute_action(
         return service.launch(action["bundle_id"], action["args"]), None
     if kind == "tap_element":
         return service.tap_element(action["identifier"]), None
+    if kind == "scroll_to_element":
+        return _scroll_to_element(service, action), None
     if kind == "tap":
         return service.tap(action["x"], action["y"]), None
     if kind == "swipe":

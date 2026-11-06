@@ -117,6 +117,20 @@ def test_invalid_bundle_identifier_does_not_reach_guest():
     assert runtime.client.calls == []
 
 
+def test_screen_queries_native_point_bounds_with_the_requested_timeout():
+    runtime = Runtime()
+    timeouts = []
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+    DeviceService(runtime).screen(timeout=0.75)
+    assert timeouts == [0.75]
+    assert runtime.client.calls == [("device.screen", None)]
+
+
 def test_phone_cannot_send_fold_commands_to_guest():
     runtime = Runtime()
     runtime.device.model = "iPhone17,3"

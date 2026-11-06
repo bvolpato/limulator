@@ -315,6 +315,11 @@ class DeviceService:
         self._check_available()
         return self.runtime.guest(timeout=timeout).rpc("ui.tree")
 
+    def screen(self, timeout: float = 60) -> dict:
+        """Read IcliKit's interface point metrics, which can fall back to the main panel."""
+        self._check_available()
+        return self.runtime.guest(timeout=timeout).rpc("device.screen")
+
     def terminate(self, bundle_id: str) -> dict:
         self._check_available()
         return self.runtime.guest().rpc("apps.terminate", {"bundle_id": bundle_identifier(bundle_id)})
