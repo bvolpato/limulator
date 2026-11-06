@@ -245,8 +245,9 @@ def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, 
         scope.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
         scope.chmod(0o700)
         program = """
-import json,socket,sys
+import json,socket,sys,time
 qmp = sys.argv[sys.argv.index('-qmp') + 1].split(',')[0].removeprefix('unix:')
+time.sleep(0.5)
 server = socket.socket(socket.AF_UNIX)
 server.bind(qmp)
 server.listen()
@@ -275,7 +276,10 @@ server.close()
         # The starting CLI has exited. Its independent worker must retain ownership.
         try:
             deadline = time.monotonic() + 5
-            while not lifecycle._identity_alive(runtime._metadata().get("process")):
+            while not (
+                lifecycle._identity_alive(runtime._metadata().get("process"))
+                and runtime.qmp_path.is_socket()
+            ):
                 assert runtime._metadata().get("state") != "error", (
                     lifecycle.Path(runtime._metadata()["run_dir"]) / "qemu.log"
                 ).read_text()
