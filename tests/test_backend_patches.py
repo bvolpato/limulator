@@ -26,24 +26,33 @@ def stack(tmp_path):
     backend.mkdir()
     qemu = backend / "qemu"
     qemu.mkdir()
+    cli = backend / "cpu-tree/vphone-cli-2.14.2"
+    cli.mkdir(parents=True)
+    repositories = {"backend": backend, "qemu": qemu, "vphone_cli": cli}
     bases = {}
-    for target, repository in (("backend", backend), ("qemu", qemu)):
+    for target, repository in repositories.items():
         git(repository, "init", "--quiet")
         git(repository, "config", "core.autocrlf", "false")
         (repository / "state.txt").write_text("before\noriginal\nafter\n")
         (repository / "unrelated.txt").write_text("unrelated base\n")
         if target == "backend":
             (repository / "obsolete.txt").write_text("removed by patch two\n")
-            (repository / ".gitignore").write_text("qemu/\n")
+            (repository / ".gitignore").write_text("qemu/\ncpu-tree/\n")
         git(repository, "add", ".")
         bases[target] = git(repository, "write-tree").decode().strip()
 
     entries = []
     previous = dict(bases)
     for number, (target, content) in enumerate(
-        (("backend", "first patch"), ("backend", "overlapping second patch"), ("qemu", "qemu patch")), 1
+        (
+            ("backend", "first patch"),
+            ("backend", "overlapping second patch"),
+            ("qemu", "qemu patch"),
+            ("vphone_cli", "cli patch"),
+        ),
+        1,
     ):
-        repository = backend if target == "backend" else qemu
+        repository = repositories[target]
         (repository / "state.txt").write_text(f"before\n{content}\nafter\n")
         if number == 2:
             (repository / "created.sh").write_text("#!/bin/sh\necho created\n")
@@ -57,7 +66,7 @@ def stack(tmp_path):
         entries.append({"target": target, "path": path.name, "sha256": hashlib.sha256(data).hexdigest()})
 
     # Restore only fixture-owned files. Keep the indexes staged to prove they are not altered.
-    for repository in (backend, qemu):
+    for repository in repositories.values():
         (repository / "state.txt").write_text("before\noriginal\nafter\n")
     (backend / "created.sh").unlink()
     (backend / "obsolete.txt").write_text("removed by patch two\n")
@@ -67,6 +76,7 @@ def stack(tmp_path):
             {
                 "backend": {"revision": bases["backend"]},
                 "submodules": {"qemu": {"revision": bases["qemu"]}},
+                "vphone_cli": {"revision": bases["vphone_cli"], "version": "2.14.2"},
                 "patches": entries,
             }
         )
@@ -80,6 +90,7 @@ def test_overlapping_stack_applies_then_reruns_with_modes_and_deletions(stack):
     patches.apply_stacks(lock, backend)
     assert (backend / "state.txt").read_text() == "before\noverlapping second patch\nafter\n"
     assert (backend / "qemu/state.txt").read_text() == "before\nqemu patch\nafter\n"
+    assert (backend / "cpu-tree/vphone-cli-2.14.2/state.txt").read_text() == "before\ncli patch\nafter\n"
     assert os.access(backend / "created.sh", os.X_OK)
     assert not (backend / "obsolete.txt").exists()
     patches.apply_stacks(lock, backend)
@@ -107,17 +118,21 @@ def test_diff_display_settings_do_not_change_the_applied_patch(stack):
     patches.apply_stacks(lock, backend)
 
 
-@pytest.mark.parametrize("target", ["backend", "qemu"])
+@pytest.mark.parametrize("target", ["backend", "qemu", "vphone_cli"])
 def test_conflicting_target_refuses_before_any_checkout_changes(stack, target):
     lock, backend = stack
-    repository = backend if target == "backend" else backend / "qemu"
+    repository = {
+        "backend": backend,
+        "qemu": backend / "qemu",
+        "vphone_cli": backend / "cpu-tree/vphone-cli-2.14.2",
+    }[target]
     (repository / "state.txt").write_text("my conflicting edit\n")
     (backend / "unrelated.txt").write_text("my unrelated edit\n")
     index = git(backend, "write-tree")
     with pytest.raises(patches.PatchError, match="Conflicting patch targets"):
         patches.apply_stacks(lock, backend)
     assert (repository / "state.txt").read_text() == "my conflicting edit\n"
-    if target == "qemu":
+    if target != "backend":
         assert (backend / "state.txt").read_text() == "before\noriginal\nafter\n"
     assert not (backend / "created.sh").exists()
     assert (backend / "obsolete.txt").exists()

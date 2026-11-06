@@ -809,9 +809,20 @@ def _stop_creation_guest(vm: Path, cid: int, unit: str):
 
 
 def _verified_guest_info(guest: GuestClient, expected_ios: str) -> dict:
+    def canonical(version):
+        if not isinstance(version, str) or not re.fullmatch(
+            r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*", version
+        ):
+            return None
+        parts = version.split(".")
+        while len(parts) > 1 and parts[-1] == "0":
+            parts.pop()
+        return tuple(parts)
+
     info = guest.rpc("device.info", {})
-    if not isinstance(info, dict) or info.get("ios_version") != expected_ios:
-        actual = info.get("ios_version") if isinstance(info, dict) else None
+    actual = info.get("ios_version") if isinstance(info, dict) else None
+    expected = canonical(expected_ios)
+    if expected is None or canonical(actual) != expected:
         raise RuntimeError(f"guest reports iOS {actual!r}; requested iOS {expected_ios}")
     return info
 

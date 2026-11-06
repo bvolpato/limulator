@@ -78,6 +78,9 @@ build_sources() {
   for name in qemu reims-vgpu metal2vulkan; do
     [[ $(git -C "$LIMULATOR_BACKEND/$name" rev-parse HEAD) == "$(jq -er --arg name "$name" '.submodules[$name].revision' "$lock")" ]] || return 1
   done
+  local cli_src=$LIMULATOR_BACKEND/cpu-tree/vphone-cli-$(jq -er .vphone_cli.version "$lock")
+  mkdir -p "$(dirname "$cli_src")"
+  fetch_checkout "$cli_src" "$(jq -er .vphone_cli.repository "$lock")" "$(jq -er .vphone_cli.revision "$lock")"
   command -v uv >/dev/null || { echo 'uv is required to validate backend patches' >&2; return 1; }
   uv run --script "$here/apply_backend_patches.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
 }
@@ -158,6 +161,7 @@ build_cli() {
   src=$LIMULATOR_BACKEND/cpu-tree/vphone-cli-$(jq -er .vphone_cli.version "$lock")
   mkdir -p "$(dirname "$src")"
   fetch_checkout "$src" "$(jq -er .vphone_cli.repository "$lock")" "$(jq -er .vphone_cli.revision "$lock")"
+  uv run --script "$here/apply_backend_patches.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
   contained env VPHONE_CLI="$src" "$LIMULATOR_BACKEND/linux-create/build.sh" \
     --jobs "$LIMULATOR_JOBS" -Xcc "-I$LIMULATOR_PREFIX/include" \
     -Xlinker "-L$LIMULATOR_PREFIX/lib" -Xlinker -rpath -Xlinker "$LIMULATOR_PREFIX/lib"

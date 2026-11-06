@@ -159,6 +159,10 @@ def apply_stacks(lock_path, backend, *, check=False):
         "backend": (backend, manifest["backend"]["revision"]),
         "qemu": (backend / "qemu", manifest["submodules"]["qemu"]["revision"]),
     }
+    if "vphone_cli" in manifest:
+        cli = manifest["vphone_cli"]
+        relative = safe_path(f"cpu-tree/vphone-cli-{cli['version']}")
+        targets["vphone_cli"] = (backend / relative, cli["revision"])
     patches = {}
     for entry in manifest["patches"]:
         target = entry["target"]

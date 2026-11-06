@@ -112,6 +112,11 @@
       "path": "patches/0010-fix-usbip-idle-in-timeouts.patch",
       "sha256": "f7f7d0b812226077de3826800a59ff5424df3b2410e74419238f1693370ae846",
       "target": "backend"
+    },
+    {
+      "path": "patches/0011-bound-dyld-cache-mappings.patch",
+      "sha256": "cd60a4da3f332fa01d42ffcf81acfbe3534ad8369062fe0b0aad85e42f778bb7",
+      "target": "vphone_cli"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

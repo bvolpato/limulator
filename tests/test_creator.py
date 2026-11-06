@@ -707,19 +707,37 @@ def test_signal_refuses_reused_process_identity():
     assert creator._identity_alive(identity)
 
 
-def test_ready_guest_must_report_the_requested_ios_version():
+@pytest.mark.parametrize(
+    "reported,accepted",
+    [
+        ("27.1", True),
+        ("27.1.0", True),
+        ("27.1.0.0", True),
+        ("27.1.1", False),
+        ("27.2", False),
+        ("26.4", False),
+        ("27.01", False),
+        ("27..1", False),
+        ("27.1beta", False),
+        ("27.1 ", False),
+        ("", False),
+        (None, False),
+        (27.1, False),
+        (True, False),
+    ],
+)
+def test_ready_guest_must_report_the_requested_ios_version(reported, accepted):
     class Guest:
-        version = "26.4"
-
         def rpc(self, method, params):
             assert (method, params) == ("device.info", {})
-            return {"ios_version": self.version, "model": "iPhone Duo"}
+            return {"ios_version": reported, "model": "iPhone Duo"}
 
     guest = Guest()
-    with pytest.raises(RuntimeError, match="reports iOS '26.4'; requested iOS 27.1"):
-        creator._verified_guest_info(guest, "27.1")
-    guest.version = "27.1"
-    assert creator._verified_guest_info(guest, "27.1")["ios_version"] == "27.1"
+    if accepted:
+        assert creator._verified_guest_info(guest, "27.1")["ios_version"] == reported
+    else:
+        with pytest.raises(RuntimeError, match="requested iOS 27.1"):
+            creator._verified_guest_info(guest, "27.1")
 
 
 def test_sudo_shim_preserves_known_native_transport_environment(catalog, tmp_path):
