@@ -1,0 +1,3 @@
+version: 1
+bundleID: com.bvolpato.limulator.counterlab
+infoPath: CounterLab-Info.plist

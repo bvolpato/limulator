@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="limulator-token" content="__LIMULATOR_TOKEN__">
+    <title>Limulator Console</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Limulator console home">
+          <span class="brand-mark" aria-hidden="true">L</span>
+          <span class="brand-name">limulator<span class="brand-period">.</span></span>
+        </a>
+
+        <div class="topbar-right">
+          <span class="environment-label">DEVICE CONSOLE</span>
+          <div id="connection-status" class="connection-status status-unknown" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="connection-label">Checking device</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="intro-row" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">LOCAL DEVICE LAB</p>
+            <h1 id="page-title">Your device workspace</h1>
+            <p class="intro-copy">Choose an iPhone, iPad, or Duo. Run your app in its real iOS guest.</p>
+          </div>
+          <div id="device-name-chip" class="device-name-chip" hidden>
+            <span class="device-chip-icon" aria-hidden="true">⌁</span>
+            <span id="device-name">Device</span>
+          </div>
+        </section>
+
+        <section class="device-toolbar panel" aria-label="Device and profile selection">
+          <div class="device-choice">
+            <label class="panel-kicker" for="device-selector">DEVICE DESTINATION</label>
+            <select id="device-selector" class="select-input" aria-describedby="destination-summary">
+              <option value="">Loading devices…</option>
+            </select>
+            <p id="destination-summary" class="field-hint">Reading the local device registry.</p>
+          </div>
+          <div id="profile-facts" class="profile-facts" aria-label="Selected profile"></div>
+          <div class="runtime-actions">
+            <button id="refresh-devices" class="button button-quiet button-small" type="button">Refresh</button>
+            <button id="start-device" class="button button-primary" type="button" disabled>Start device</button>
+            <button id="stop-device" class="button button-outline" type="button" disabled>Stop device</button>
+          </div>
+          <div id="profile-setup" class="profile-setup" hidden>
+            <div>
+              <h3 id="profile-setup-title">Create this device locally</h3>
+              <p id="profile-setup-copy">Run this command in your terminal to prepare the selected profile.</p>
+            </div>
+            <div class="setup-command">
+              <input id="create-command" aria-label="Device creation command" readonly spellcheck="false">
+              <button id="copy-create-command" class="button button-secondary button-small" type="button">Copy command</button>
+            </div>
+          </div>
+        </section>
+
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden>
+          <span id="notice-message"></span>
+          <button id="dismiss-notice" class="icon-button notice-dismiss" type="button" aria-label="Dismiss notification">×</button>
+        </div>
+
+        <div class="console-grid">
+          <section class="preview-card panel" aria-labelledby="preview-title">
+            <div class="panel-heading preview-heading">
+              <div>
+                <p class="panel-kicker">LIVE DEVICE</p>
+                <h2 id="preview-title">Screen preview</h2>
+              </div>
+              <div class="preview-actions">
+                <span id="screen-resolution" class="resolution-label">Waiting for screen</span>
+                <button id="download-screen" class="button button-quiet button-small" type="button" disabled>
+                  <span aria-hidden="true">↓</span> Download PNG
+                </button>
+              </div>
+            </div>
+
+            <div id="screen-stage" class="screen-stage" aria-describedby="screen-help">
+              <div id="screen-empty" class="screen-empty">
+                <p class="empty-eyebrow">DEVICE SCREEN</p>
+                <h3 id="screen-empty-title">No live screen yet</h3>
+                <p id="screen-empty-copy">Connect and boot a device to see its actual display here.</p>
+              </div>
+              <img id="screen-image" class="screen-image" alt="Live device screen preview" draggable="false" tabindex="0" hidden>
+            </div>
+
+            <div class="preview-footer">
+              <p id="screen-help" class="screen-help">Tap or drag on the live image, or focus it and press Enter to tap center.</p>
+              <span id="screen-live-indicator" class="live-indicator" hidden><span class="live-dot" aria-hidden="true"></span> REAL-TIME</span>
+            </div>
+
+            <form id="text-form" class="command-bar">
+              <label class="sr-only" for="device-text">Type text on device</label>
+              <span class="command-icon" aria-hidden="true">⌘</span>
+              <input id="device-text" name="text" type="text" maxlength="4096" autocomplete="off" placeholder="Type text on device…" disabled>
+              <button id="send-text" class="button button-primary button-small" type="submit" disabled>Send <span aria-hidden="true">↗</span></button>
+            </form>
+          </section>
+
+          <aside class="side-column" aria-label="Device controls">
+            <section class="panel device-panel" aria-labelledby="device-panel-title">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <p class="panel-kicker">DEVICE</p>
+                  <h2 id="device-panel-title">Details</h2>
+                </div>
+                <span id="device-state-badge" class="state-badge status-unknown">Unknown</span>
+              </div>
+              <dl class="device-facts">
+                <div class="fact-row">
+                  <dt>Model</dt>
+                  <dd id="detail-model">N/A</dd>
+                </div>
+                <div class="fact-row">
+                  <dt>OS</dt>
+                  <dd id="detail-os">N/A</dd>
+                </div>
+                <div class="fact-row">
+                  <dt>Resolution</dt>
+                  <dd id="detail-resolution">N/A</dd>
+                </div>
+                <div class="fact-row">
+                  <dt>Scale</dt>
+                  <dd id="detail-scale">N/A</dd>
+                </div>
+                <div class="fact-row" id="fold-angle-row" hidden>
+                  <dt>Fold angle</dt>
+                  <dd id="detail-fold-angle">N/A</dd>
+                </div>
+                <div class="fact-row runtime-row">
+                  <dt>Runtime</dt>
+                  <dd id="detail-runtime">Waiting</dd>
+                </div>
+              </dl>
+              <p id="device-error" class="device-error" hidden></p>
+            </section>
+
+            <section class="panel controls-panel" aria-labelledby="controls-title">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <p class="panel-kicker">ACTIONS</p>
+                  <h2 id="controls-title">Device controls</h2>
+                </div>
+              </div>
+              <div class="control-grid">
+                <button class="control-button" data-action="button" data-name="home" type="button" disabled>
+                  <span class="control-glyph home-glyph" aria-hidden="true"></span>
+                  <span>Home</span>
+                </button>
+                <button class="control-button" data-action="button" data-name="lock" type="button" disabled>
+                  <span class="control-glyph lock-glyph" aria-hidden="true"></span>
+                  <span>Lock</span>
+                </button>
+              </div>
+              <div class="section-divider"></div>
+              <div class="fold-header" id="fold-heading">
+                <div>
+                  <h3>Duo fold posture</h3>
+                  <p>Set the device hinge position.</p>
+                </div>
+              </div>
+              <div id="fold-controls" class="fold-control" role="group" aria-label="Duo fold position">
+                <button class="fold-button" data-fold-position="closed" type="button" aria-pressed="false" disabled>Closed</button>
+                <button class="fold-button" data-fold-position="book" type="button" aria-pressed="false" disabled>Book</button>
+                <button class="fold-button" data-fold-position="open" type="button" aria-pressed="false" disabled>Open</button>
+              </div>
+              <p id="fold-unavailable" class="field-hint" hidden>Fold posture is available on iPhone Duo.</p>
+            </section>
+
+            <section class="panel apps-panel" aria-labelledby="apps-title">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <p class="panel-kicker">APPLICATIONS</p>
+                  <h2 id="apps-title">Installed apps</h2>
+                </div>
+                <button id="refresh-apps" class="icon-button refresh-button" type="button" aria-label="Refresh installed apps" title="Refresh apps">↻</button>
+              </div>
+              <label class="sr-only" for="app-selector">Choose an installed app</label>
+              <select id="app-selector" class="select-input" disabled>
+                <option value="">Loading installed apps…</option>
+              </select>
+              <p id="apps-hint" class="field-hint">Apps are reported by the connected device.</p>
+              <button id="launch-app" class="button button-secondary full-button" type="button" disabled>Launch app <span aria-hidden="true">↗</span></button>
+            </section>
+
+            <section class="panel install-panel" aria-labelledby="install-title">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <p class="panel-kicker">ADD AN APP</p>
+                  <h2 id="install-title">Install IPA</h2>
+                </div>
+                <span class="file-type-badge">.IPA</span>
+              </div>
+              <p class="install-copy">Choose one IPA package from your computer.</p>
+              <input id="ipa-file" class="sr-only" type="file" accept=".ipa,application/octet-stream" aria-label="Choose an IPA file">
+              <button id="choose-ipa" class="button button-outline full-button" type="button" disabled>Choose IPA file <span aria-hidden="true">↑</span></button>
+              <p id="selected-file" class="field-hint selected-file" aria-live="polite">No file selected</p>
+            </section>
+          </aside>
+        </div>
+
+        <footer class="page-footer">
+          <span>Limulator</span>
+          <span id="last-updated">Waiting for device status</span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

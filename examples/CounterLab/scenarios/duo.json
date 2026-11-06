@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "steps": [
+    {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
+    {"action": "wait_text", "text": "Counter Lab", "timeout": 120},
+    {"action": "tap_element", "identifier": "counterlab.reset"},
+    {"action": "wait_text", "text": "0", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "fold", "position": "closed"},
+    {"action": "wait_text", "text": "0", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "01-cover.png"},
+    {"action": "fold", "position": "book"},
+    {"action": "wait_text", "text": "0", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "02-book.png"},
+    {"action": "fold", "position": "open"},
+    {"action": "wait_text", "text": "0", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "03-open.png"},
+    {"action": "tap_element", "identifier": "counterlab.increment"},
+    {"action": "wait_text", "text": "1", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "04-open-interaction.png"},
+    {"action": "fold", "position": "closed"},
+    {"action": "wait_text", "text": "1", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "05-returned-to-cover.png"}
+  ]
+}

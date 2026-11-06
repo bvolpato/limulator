@@ -1,0 +1,64 @@
+{
+  "release": {
+    "status": "research-preview",
+    "label": "Public research preview",
+    "detail": "Native runtime validation in progress",
+    "publicStatus": "Source is public. Native app validation is still in progress."
+  },
+  "guest": {
+    "label": "Duo guest creation",
+    "status": "customizing",
+    "value": "iOS restored",
+    "device": "iPhone Duo",
+    "os": "iOS 27.1",
+    "workflowValue": "Guest components installing",
+    "proofLabel": "NATIVE VALIDATION",
+    "proofValue": "Native restore completed",
+    "detail": "The native restore finished successfully with iOS 27.1 (24A94425). Research guest components are installing; app execution and native frames await first boot."
+  },
+  "sample": {
+    "label": "CounterLab · SDK 27.2",
+    "status": "verified-build",
+    "value": "IPA built",
+    "detail": "A CounterLab IPA was produced with xtool and the Xcode 27.2 SDK. This proves the build step only."
+  },
+  "runtime": {
+    "label": "Native runtime proof",
+    "status": "pending",
+    "value": "Next validation",
+    "proofLabel": "NEXT VALIDATION",
+    "workflowValue": "Native boot validation pending",
+    "captureValue": "Native capture pending",
+    "detail": "Native boot, app install, launch, input, persistence and screenshot checks are the acceptance gates after restoration.",
+    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. The iOS restore completed successfully; native boot, app install, launch, input, persistence and screenshots are still being validated."
+  },
+  "workflowNote": "Debug and release sample IPAs build with SDK 27.2. Native restore is complete; guest setup and first boot precede the app checks.",
+  "faq": {
+    "release": "The source repository is public as a research preview. Native app execution and device profiles are still being validated; public source availability does not establish runtime compatibility."
+  },
+  "captures": [],
+  "applicationMeasurements": [],
+  "microbenchmark": {
+    "title": "Self-modifying code · QEMU microbenchmark",
+    "description": "32 KiB code-copy workload, nine allocated vCPU caches, three interleaved runs. Rewritten instructions were validated after each run.",
+    "runs": 3,
+    "workload": "32 KiB self-modifying code copy",
+    "vcpus": 9,
+    "validated": true,
+    "results": [
+      {
+        "label": "Full cache clear",
+        "seconds": 0.6417,
+        "display": "0.6417 s",
+        "method": "Clear all translated-code caches"
+      },
+      {
+        "label": "Epoch invalidation",
+        "seconds": 0.00063,
+        "display": "0.000630 s",
+        "method": "Invalidate by cache epoch"
+      }
+    ],
+    "scope": "This is a QEMU cache-invalidation microbenchmark. It does not measure app startup, interaction latency, graphics performance, or user-visible speed."
+  }
+}

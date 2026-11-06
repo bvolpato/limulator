@@ -1,0 +1,62 @@
+{
+  "profiles": [
+    {
+      "id": "duo",
+      "label": "iPhone Duo",
+      "badge": "Active research target",
+      "state": "active",
+      "validation": "Native iOS restore completed. Guest setup and first boot are next; app execution, software postures and touch behavior remain unverified.",
+      "diagram": "cover",
+      "form": "Cover framebuffer · experimental inner display",
+      "device": "iPhone Duo",
+      "model": "iPhone19,4",
+      "guest": "iOS 27.1",
+      "profileId": "iphone-duo",
+      "deviceName": "duo",
+      "scale": "3× native scale",
+      "dimensions": "1398 × 2034 px",
+      "innerDisplay": "2007 × 2853 px @ 3×",
+      "postures": "Closed · book · open (software)",
+      "note": "Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer. Software postures are available, but native layout, touch and runtime behavior remain unverified. The physical hinge and second physical scanout are outside this emulation.",
+      "source": "Active guest configuration"
+    },
+    {
+      "id": "iphone",
+      "label": "iPhone 16",
+      "badge": "Firmware verified",
+      "state": "research",
+      "validation": "No standard iPhone guest has been verified.",
+      "diagram": "portrait",
+      "form": "Single display · profile candidate",
+      "device": "iPhone 16",
+      "model": "iPhone17,3",
+      "guest": "iOS 27.0.1",
+      "profileId": "iphone-16",
+      "deviceName": "iphone-16",
+      "scale": "3× native scale",
+      "dimensions": "1179 × 2556 px",
+      "postures": "Single display · runtime checks pending",
+      "note": "The iPhone 16 firmware package has passed its size and SHA-256 checks. Guest startup and native app behavior are not yet verified.",
+      "source": "Catalog profile · verified firmware"
+    },
+    {
+      "id": "ipad",
+      "label": "iPad mini (A17 Pro)",
+      "badge": "Experimental",
+      "state": "research",
+      "validation": "Experimental. Native UIKit .pad behavior has not been verified.",
+      "diagram": "ipad",
+      "form": "Tablet display · experimental profile",
+      "device": "iPad mini (A17 Pro)",
+      "model": "iPad16,1",
+      "guest": "iPadOS 27.0.1",
+      "profileId": "ipad-mini-a17-pro",
+      "deviceName": "ipad-mini",
+      "scale": "2× native scale",
+      "dimensions": "1488 × 2266 px",
+      "postures": "UIKit .pad idiom · proof pending",
+      "note": "Firmware has passed its size and SHA-256 checks. This profile remains experimental until a native app confirms UIKit .pad behavior and layout.",
+      "source": "Experimental catalog profile"
+    }
+  ]
+}

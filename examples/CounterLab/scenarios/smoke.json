@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "steps": [
+    {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
+    {"action": "wait_text", "text": "Counter Lab", "timeout": 120},
+    {"action": "tap_element", "identifier": "counterlab.reset"},
+    {"action": "wait_text", "text": "0", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "01-reset.png"},
+    {"action": "tap_element", "identifier": "counterlab.increment"},
+    {"action": "wait_text", "text": "1", "identifier": "counterlab.counter.value", "exact": true},
+    {"action": "screenshot", "name": "02-incremented.png"},
+    {"action": "tap_element", "identifier": "counterlab.details.link"},
+    {"action": "wait_text", "text": "1", "identifier": "counterlab.details.count", "exact": true},
+    {"action": "tap_element", "identifier": "counterlab.details.note.input"},
+    {"action": "text", "text": "Hello from Linux ✓"},
+    {"action": "wait_text", "text": "Hello from Linux ✓", "identifier": "counterlab.details.note.input", "exact": true},
+    {"action": "screenshot", "name": "03-native-text-input.png"},
+    {"action": "button", "name": "home"},
+    {"action": "terminate", "bundle_id": "com.bvolpato.limulator.counterlab"},
+    {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
+    {"action": "wait_text", "text": "1", "identifier": "counterlab.counter.value", "exact": true, "timeout": 120},
+    {"action": "screenshot", "name": "04-persisted-after-relaunch.png"}
+  ]
+}

@@ -1,0 +1,38 @@
+[project]
+name = "limulator"
+version = "0.1.0"
+description = "Run, inspect, and test iPhone apps on Linux with a local iOS guest."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["fastapi", "uvicorn", "python-multipart", "pillow"]
+
+[project.scripts]
+limulator = "limulator.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest", "httpx", "ruff"]
+
+[tool.uv]
+exclude-newer = "7 days"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/limulator"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"tools" = "limulator/_tools"
+"patches" = "limulator/patches"
+"third_party.lock.json" = "limulator/third_party.lock.json"

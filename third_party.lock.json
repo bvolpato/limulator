@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "backend": {
+    "repository": "https://github.com/YahiaAngelo/vphone-linux.git",
+    "revision": "c2dc1996c8398ddb994288a29a719360f354d268"
+  },
+  "submodules": {
+    "qemu": {"repository": "https://github.com/YahiaAngelo/qemu-vphone.git", "revision": "14c9913d2231080bd234c69421ed4f293a25f767"},
+    "reims-vgpu": {"repository": "https://github.com/YahiaAngelo/reims-vgpu.git", "revision": "960bf4b128a2678f032e46eb32964caa4828b818"},
+    "metal2vulkan": {"repository": "https://github.com/YahiaAngelo/metal2vulkan.git", "revision": "542e2141384e374dfc08cee0e29a9f97d96d6c64"}
+  },
+  "apple_usb": {
+    "libplist": {"repository": "https://github.com/libimobiledevice/libplist.git", "revision": "678b1a34693b86ae1787fa470dcb7203ffd0ef3f", "version": "2.8.1"},
+    "libimobiledevice-glue": {"repository": "https://github.com/libimobiledevice/libimobiledevice-glue.git", "revision": "ecc0f1ba4fca96f3d7ef060b6c53f2e0bcfe829f", "version": "1.3.3"},
+    "libtatsu": {"repository": "https://github.com/libimobiledevice/libtatsu.git", "revision": "d8928042bcbb7048bc87a994d3e84c29eacf2f32", "version": "1.1.0"},
+    "libusbmuxd": {"repository": "https://github.com/libimobiledevice/libusbmuxd.git", "revision": "adf9c22b9010490e4b55eaeb14731991db1c172c", "version": "2.1.1"},
+    "libimobiledevice": {"repository": "https://github.com/libimobiledevice/libimobiledevice.git", "revision": "149f7623c672c1fa73122c7119a12bfc0012f2ac", "version": "1.4.0"},
+    "libirecovery": {"repository": "https://github.com/libimobiledevice/libirecovery.git", "revision": "b59ef4814525f487287da1609864f432cd79e3ed", "version": "1.3.1"}
+  },
+  "vphone_cli": {"repository": "https://github.com/Lakr233/vphone-cli.git", "revision": "83197152137ddd2aad70eb121d6b88a9afbee36e", "version": "2.14.2"},
+  "meson": {
+    "version": "1.5.2",
+    "url": "https://files.pythonhosted.org/packages/55/a6/47b9353c331318a13eb050887eacfd61eb075746285f9baf7ef7de6ae235/meson-1.5.2-py3-none-any.whl",
+    "sha256": "77706e2368a00d789c097632ccf4fc39251fba56d03e1e1b262559a3c7a08f5b"
+  },
+  "nettle": {
+    "version": "3.10.2",
+    "url": "https://ftp.gnu.org/gnu/nettle/nettle-3.10.2.tar.gz",
+    "sha256": "fe9ff51cb1f2abb5e65a6b8c10a92da0ab5ab6eaf26e7fc2b675c45f1fb519b5"
+  },
+  "swift": {
+    "version": "6.4.1",
+    "url": "https://download.swift.org/swift-6.4.1-release/ubuntu2404/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE-ubuntu24.04.tar.gz",
+    "sha256": "7d246c7114077ad01dba4ad897628446ada4c489d6c7dbcf39ae3f25cbe17e8b"
+  },
+  "xtool": {
+    "version": "1.24.0-14-ge3c6153",
+    "repository": "https://github.com/bvolpato/xtool.git",
+    "ref": "codex/linux-apple-platforms",
+    "revision": "e3c615391817cde2512a38118a064f834ff64a32",
+    "architecture": "x86_64",
+    "build": {
+      "configuration": "debug",
+      "product": "xtool",
+      "jobs": 4,
+      "swift": "6.4.1"
+    },
+    "sdk": {
+      "version": "27.2",
+      "archive": "Xcode_27.2.xip",
+      "sha256": "c28b05526225394fa4017d7f9919c1c898822713edca68872cb4701599f01978",
+      "canonical_name": "iphoneos27.2",
+      "bundle_version": "epoch=5,darwinTools=1.1.0,oam=1.4.1"
+    }
+  },
+  "usbmuxd": {"repository": "https://github.com/libimobiledevice/usbmuxd.git", "revision": "3ded00c9985a5108cfc7591a309f9a23d57a8cba", "usb_mtu": 32768},
+  "rcodesign": {
+    "version": "0.29.0",
+    "repository": "https://github.com/indygreg/apple-platform-rs",
+    "url": "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002"
+  },
+  "patches": [
+    {
+      "path": "patches/0001-scope-dfu-exporter-cleanup.patch",
+      "sha256": "d08889bc164eaa7e9b1bd24c686ada8e472114be582a5158c4f25d4a44998b30",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0002-preserve-and-bound-creation.patch",
+      "sha256": "67530e536036822464191491eec0885333cd93b8228346ebae67b1ea18a2634a",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0003-isolate-gpu-driver-recovery.patch",
+      "sha256": "b3888d9cd54140521d85800894a67f2c50ea14a08cfce6f11b27388f24654def",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0004-fix-usbip-unlink-framing.patch",
+      "sha256": "948b8d0c6f4098148837ac14cfe4505c2bd8a006d7d5276459377f7ad6663448",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0005-clear-failed-recovery-client.patch",
+      "sha256": "c05ccc6f9151acab361b1047ceb7eae81126b6d78a8c647651eb629658bd520e",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0006-qemu-release-acquire-ordering.patch",
+      "sha256": "a7983d5f3c88499e2532d54a3907f6d29367131c5939657d738ce54d3bfe8958",
+      "target": "qemu",
+      "upstream_commit": "https://github.com/YahiaAngelo/qemu-vphone/commit/38c32a9bf16d92c0fd1d82b20c051cbe34a90372"
+    },
+    {
+      "path": "patches/0007-local-gdb-endpoint.patch",
+      "sha256": "0ee566a19024e5e6d538b1dee3b1dd1f454086911447f1a53aa3f0a506346277",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0008-qemu-jump-cache-invalidation-epochs.patch",
+      "sha256": "b570c814409aea593aaac9cf56956d92ff3044ac5b1f86b4934114d155146ae8",
+      "target": "qemu",
+      "upstream_commit": "https://github.com/YahiaAngelo/qemu-vphone/commit/f6b3bc9d8ec9ba3113a4dbae9e9584775cd0d1f2"
+    },
+    {
+      "path": "patches/0009-iphone-16-native-display.patch",
+      "sha256": "094bb2a02a11e92be5dd1817bdb2b930c2427d2f148d2e124deaeac414d6c98a",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0010-fix-usbip-idle-in-timeouts.patch",
+      "sha256": "f7f7d0b812226077de3826800a59ff5424df3b2410e74419238f1693370ae846",
+      "target": "backend"
+    }
+  ],
+  "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},
+  "release": {
+    "version": "2.14.2",
+    "url": "https://github.com/Lakr233/vphone-cli/releases/download/2.14.2/VPhone-2.14.2.zip",
+    "sha256": "80212fc06b9d2269d8ed76ac12ed09c5bc9f44b88a53dec905e5ed5fcd428923"
+  }
+}

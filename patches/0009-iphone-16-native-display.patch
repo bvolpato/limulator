@@ -1,0 +1,10 @@
+diff --git a/linux-create/edits/VPhoneCoreKit.txt b/linux-create/edits/VPhoneCoreKit.txt
+index 1b71e49..55452b0 100644
+--- a/linux-create/edits/VPhoneCoreKit.txt
++++ b/linux-create/edits/VPhoneCoreKit.txt
+@@ -4,3 +4,5 @@
+ Firmware/VPhoneFirmwareIndex.swift	s/defer \{ session\.invalidateAndCancel\(\) \}/_ = Unmanaged.passRetained(session) \/\/ vphone-linux: never free a URLSession on Linux Foundation (_MultiHandle deinit aborts); this one lives for the process/
+ Firmware/VPhoneAEA.swift	s/defer \{ session\.invalidateAndCancel\(\) \}/_ = Unmanaged.passRetained(session) \/\/ vphone-linux: never free a URLSession on Linux Foundation (_MultiHandle deinit aborts); this one lives for the process/
+ VirtualMachine/VPhoneShaderCache.swift	s/confstr\(_CS_DARWIN_USER_CACHE_DIR, /vphoneUserCacheDir(/
++# iPhone17,3 is the base iPhone 16: 393x852 points at its native 3x scale.
++VirtualMachine/VPhoneGuestDevice.swift	/^    public static let iPhone17_3 = /,/^    private static func iPhone/ s/screen: [.]default,/screen: .init(width: 1179, height: 2556, pixelsPerInch: 460, scale: 3.0),/
