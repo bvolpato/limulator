@@ -10,9 +10,13 @@ permissions:
 
 jobs:
   linux:
-    name: Protocols, lifecycle, console, and package
+    name: Protocols, lifecycle, console, and package (${{ matrix.python }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [system, managed]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,7 +28,7 @@ jobs:
         with:
           node-version: 22
       - name: Install locked development environment
-        run: uv sync --locked --python 3.12
+        run: uv sync --locked --python 3.12 ${{ matrix.python == 'managed' && '--managed-python' || '--no-managed-python' }}
       - name: Check Python and browser code
         run: |
           uv run ruff check .

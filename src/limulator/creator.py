@@ -291,19 +291,22 @@ def _apply_profile_configuration(vm: Path, profile: DeviceProfile, scale: int) -
             target.write_text(value)
 
 
-def _fresh_disk_allowed(paths: Paths, candidate: Device, receipt: dict | None) -> None:
-    specification = {
+def _creation_specification(candidate: Device) -> dict:
+    return {
         "name": candidate.name,
         "model": candidate.model,
         "ios": candidate.os_version,
         "cid": candidate.cid,
         "scale": candidate.scale,
     }
+
+
+def _fresh_disk_allowed(paths: Paths, candidate: Device, receipt: dict | None) -> None:
     for device in Registry(paths).list():
         disk = candidate.vm_path / "Disk.img"
         if device.name == candidate.name or (disk.exists() and disk.samefile(device.vm_path / "Disk.img")):
             raise ValueError("fresh disk recovery is unavailable for a registered device")
-    if not receipt or receipt.get("specification") != specification:
+    if not receipt or receipt.get("specification") != _creation_specification(candidate):
         raise ValueError("fresh disk recovery requires a matching incomplete creation receipt")
     completed = _completed(candidate.vm_path)
     if (
@@ -434,6 +437,65 @@ def _prepare_fresh_disk(
             if new_fd is not None:
                 os.close(new_fd)
         raise
+
+
+def _resume_completed_boot(
+    paths: Paths, candidate: Device, receipt: dict | None, run_dir: Path, disk_fd: int
+) -> dict | None:
+    vm = candidate.vm_path
+    completed = _completed(vm)
+    if "booted" not in completed:
+        return None
+    if (
+        not receipt
+        or receipt.get("specification") != _creation_specification(candidate)
+        or receipt.get("state") not in ("creating", "error")
+        or completed != list(_STAGES)
+    ):
+        raise RuntimeError("verification resume requires a matching incomplete creation receipt")
+    disk, opened = vm / "Disk.img", os.fstat(disk_fd)
+    current = disk.lstat()
+    if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+        opened.st_dev,
+        opened.st_ino,
+    ):
+        raise RuntimeError("verification resume requires ownership of the original regular disk")
+    if _disk_users(disk):
+        raise RuntimeError("verification resume refuses a disk with an active owner")
+    if any(
+        device.name == candidate.name or disk.samefile(device.vm_path / "Disk.img")
+        for device in Registry(paths).list()
+    ):
+        raise RuntimeError("verification resume is unavailable for a registered device")
+    state_path = vm / ".create-state"
+    if not stat.S_ISREG(state_path.lstat().st_mode):
+        raise RuntimeError("verification resume requires a regular creation state file")
+    original = state_path.read_bytes()
+    updated = b"".join(
+        line for line in original.splitlines(keepends=True) if line.rstrip(b"\r\n") != b"booted"
+    )
+    backup = run_dir / ".create-state.before-verification-resume"
+    with backup.open("xb") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(original)
+        stream.flush()
+        os.fsync(stream.fileno())
+    fd, temporary = tempfile.mkstemp(prefix=".create-state-", dir=vm)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(updated)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, state_path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+    return {
+        "preserved_state": str(backup),
+        "previous_state_sha256": hashlib.sha256(original).hexdigest(),
+        "resumed_state_sha256": hashlib.sha256(updated).hexdigest(),
+        "selected_stages": ["booted"],
+    }
 
 
 def _unit_states() -> dict[str, str]:
@@ -805,13 +867,7 @@ def _pipeline(
     fresh_disk: bool = False,
 ) -> dict:
     vm = candidate.vm_path
-    specification = {
-        "name": candidate.name,
-        "model": candidate.model,
-        "ios": candidate.os_version,
-        "cid": candidate.cid,
-        "scale": candidate.scale,
-    }
+    specification = _creation_specification(candidate)
     state_path = vm / ".limulator-create.json"
     old = _read_json(state_path)
     previous_receipt = state_path.read_bytes() if fresh_disk and old else None
@@ -820,7 +876,7 @@ def _pipeline(
     if vm.exists() and any(vm.iterdir()) and (not old or old.get("specification") != specification):
         raise RuntimeError(f"existing VM data has no matching creation receipt; preserving {vm}")
     _private_directory(vm)
-    state = old or {"specification": specification, "completed": []}
+    state = dict(old) if old else {"specification": specification, "completed": []}
     state.pop("error", None)
     state.update(
         state="creating",
@@ -885,6 +941,10 @@ def _pipeline(
                 stream.write("bundle\n")
         candidate.validate_vm()
         disk_fd = _lock_disk(vm / "Disk.img")
+        resumed = _resume_completed_boot(paths, candidate, old, run_dir, disk_fd)
+        if resumed is not None:
+            state.update(verification_resume=resumed, completed=_completed(vm), stage="booted")
+            _atomic_json(state_path, state)
         if fresh_disk:
             previous_disk_fd = disk_fd
             disk_fd, fresh_record = _prepare_fresh_disk(

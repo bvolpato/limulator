@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import json
 import math
 import os
 import re
+import selectors
 import socket
 import stat
 import struct
@@ -80,13 +83,59 @@ def _sendall(sock: socket.socket, data: bytes, deadline: float, operation: str) 
 
 
 def _set_vsock_buffers(sock: socket.socket, af_vsock: int) -> None:
-    # These vm_sockets options take native uint64_t values, not Python's int optlen.
-    value = struct.pack("@Q", _VSOCK_BUFFER_SIZE)
+    # AF_VSOCK-aware CPython packs an integer as uint64_t itself. Other builds
+    # need the explicit Linux buffer because their generic integer optlen is 4.
+    value = _VSOCK_BUFFER_SIZE if hasattr(socket, "AF_VSOCK") else struct.pack("@Q", _VSOCK_BUFFER_SIZE)
     for option in (
         getattr(socket, "SO_VM_SOCKETS_BUFFER_MAX_SIZE", 2),
         getattr(socket, "SO_VM_SOCKETS_BUFFER_SIZE", 0),
     ):
         sock.setsockopt(af_vsock, option, value)
+
+
+class _SockaddrVm(ctypes.Structure):
+    """Linux UAPI sockaddr_vm, including its reserved bytes and flags."""
+
+    _fields_ = [
+        ("family", ctypes.c_ushort),
+        ("reserved", ctypes.c_ushort),
+        ("port", ctypes.c_uint),
+        ("cid", ctypes.c_uint),
+        ("flags", ctypes.c_ubyte),
+        ("zero", ctypes.c_ubyte * 3),
+    ]
+
+
+def _connect_vsock_linux(sock: socket.socket, cid: int, port: int, deadline: float) -> None:
+    """Connect when CPython cannot encode VSOCK addresses, without blocking libc."""
+    operation = f"connecting to vphoned at CID {cid}"
+    _remaining(deadline, operation)
+    address = _SockaddrVm(family=_LINUX_AF_VSOCK, port=port, cid=cid)
+    connect = ctypes.CDLL(None, use_errno=True).connect
+    connect.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+    connect.restype = ctypes.c_int
+    sock.setblocking(False)
+    result = connect(sock.fileno(), ctypes.byref(address), ctypes.sizeof(address))
+    error = ctypes.get_errno() if result != 0 else 0
+    if error not in (0, errno.EISCONN):
+        if error not in (errno.EINPROGRESS, errno.EALREADY, errno.EINTR):
+            raise OSError(error, os.strerror(error))
+        with selectors.DefaultSelector() as selector:
+            selector.register(sock, selectors.EVENT_WRITE)
+            while True:
+                remaining = _remaining(deadline, operation)
+                try:
+                    ready = selector.select(remaining)
+                except InterruptedError:
+                    continue
+                if not ready:
+                    continue
+                error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if error in (0, errno.EISCONN):
+                    break
+                if error not in (errno.EINPROGRESS, errno.EALREADY, errno.EINTR):
+                    raise OSError(error, os.strerror(error))
+    _set_socket_deadline(sock, deadline, operation)
 
 
 class _SocketBuffer:
@@ -215,8 +264,11 @@ class GuestClient:
         sock = socket.socket(af_vsock, socket.SOCK_STREAM)
         try:
             _set_vsock_buffers(sock, af_vsock)
-            _set_socket_deadline(sock, deadline, f"connecting to vphoned at CID {self.cid}")
-            sock.connect((self.cid, _VPHONED_PORT))
+            if hasattr(socket, "AF_VSOCK"):
+                _set_socket_deadline(sock, deadline, f"connecting to vphoned at CID {self.cid}")
+                sock.connect((self.cid, _VPHONED_PORT))
+            else:
+                _connect_vsock_linux(sock, self.cid, _VPHONED_PORT, deadline)
             return sock, _SocketBuffer(sock)
         except ProtocolError:
             sock.close()

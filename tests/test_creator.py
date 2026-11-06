@@ -239,6 +239,123 @@ def _incomplete_vm(paths):
     return Device("duo", vm, "iPhone19,4", "27.1"), receipt
 
 
+def _unregistered_booted_vm(paths):
+    candidate, receipt = _incomplete_vm(paths)
+    (candidate.vm_path / ".create-state").write_bytes(
+        b"sanity\r\nbundle\r\nfirmware\r\ngpu-driver\r\nprepare\r\npatch\r\nrestore\r\ncfw\r\nbooted\r\n"
+    )
+    receipt.update(completed=list(creator._STAGES), stage="verification")
+    creator._atomic_json(candidate.vm_path / ".limulator-create.json", receipt)
+    return candidate, receipt
+
+
+def test_verification_resume_preserves_state_and_only_reselects_first_boot(catalog, monkeypatch):
+    candidate, _ = _unregistered_booted_vm(catalog)
+    vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
+    original, inode = disk.read_bytes(), disk.stat().st_ino
+    markers = (vm / ".create-state").read_bytes()
+    script = catalog.backend / "setup/create-vm.sh"
+    script.write_text("# LIMULATOR_CREATOR_USB_READY\n")
+    monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
+    monkeypatch.setattr(creator, "_unit_states", lambda: {})
+
+    def unavailable(_self):
+        raise RuntimeError("pause before native launch")
+
+    monkeypatch.setattr(creator._USBHelpers, "start", unavailable)
+    host_fd = creator._host_creation_lock({})
+    try:
+        with pytest.raises(RuntimeError, match="pause before native launch"):
+            creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+    finally:
+        os.close(host_fd)
+    receipt = creator._read_json(vm / ".limulator-create.json")
+    record = receipt["verification_resume"]
+    assert record["selected_stages"] == ["booted"]
+    assert creator.Path(record["preserved_state"]).read_bytes() == markers
+    assert record["previous_state_sha256"] == hashlib.sha256(markers).hexdigest()
+    assert (vm / ".create-state").read_bytes() == markers.replace(b"booted\r\n", b"")
+    assert creator._completed(vm) == list(creator._STAGES[:-1])
+    assert receipt["stage"] == "booted"
+    assert receipt["state"] == "error"
+    assert disk.read_bytes() == original
+    assert disk.stat().st_ino == inode
+    assert Registry(catalog).list() == []
+
+
+@pytest.mark.parametrize("refusal", ["registered", "mismatched", "ready", "missing-cfw"])
+def test_verification_resume_refuses_nonmatching_or_completed_device(catalog, refusal):
+    candidate, receipt = _unregistered_booted_vm(catalog)
+    if refusal == "registered":
+        Registry(catalog).register(candidate)
+    elif refusal == "mismatched":
+        receipt["specification"]["cid"] = 42
+    elif refusal == "ready":
+        receipt["state"] = "ready"
+    else:
+        state_path = candidate.vm_path / ".create-state"
+        state_path.write_bytes(state_path.read_bytes().replace(b"cfw\r\n", b""))
+    run = candidate.vm_path / "new-run"
+    run.mkdir()
+    original = (candidate.vm_path / ".create-state").read_bytes()
+    disk_fd = creator._lock_disk(candidate.vm_path / "Disk.img")
+    try:
+        with pytest.raises(RuntimeError, match="registered device|matching incomplete"):
+            creator._resume_completed_boot(catalog, candidate, receipt, run, disk_fd)
+    finally:
+        os.close(disk_fd)
+    assert (candidate.vm_path / ".create-state").read_bytes() == original
+    assert list(run.iterdir()) == []
+
+
+def test_verification_resume_atomic_write_failure_preserves_all_stages(catalog, monkeypatch):
+    candidate, receipt = _unregistered_booted_vm(catalog)
+    vm, run = candidate.vm_path, candidate.vm_path / "new-run"
+    run.mkdir()
+    markers = (vm / ".create-state").read_bytes()
+    disk_fd = creator._lock_disk(vm / "Disk.img")
+
+    def unavailable(*_args):
+        raise OSError("state replacement unavailable")
+
+    monkeypatch.setattr(creator.os, "replace", unavailable)
+    try:
+        with pytest.raises(OSError, match="state replacement unavailable"):
+            creator._resume_completed_boot(catalog, candidate, receipt, run, disk_fd)
+    finally:
+        os.close(disk_fd)
+    assert (vm / ".create-state").read_bytes() == markers
+    assert (run / ".create-state.before-verification-resume").read_bytes() == markers
+
+
+def test_verification_resume_refuses_an_external_open_disk(catalog):
+    candidate, receipt = _unregistered_booted_vm(catalog)
+    vm, run = candidate.vm_path, candidate.vm_path / "new-run"
+    run.mkdir()
+    markers = (vm / ".create-state").read_bytes()
+    disk_fd = creator._lock_disk(vm / "Disk.img")
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys; f=open(sys.argv[1],'rb'); print('ready',flush=True); sys.stdin.read()",
+            str(vm / "Disk.img"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout.readline().strip() == "ready"
+        with pytest.raises(RuntimeError, match="active owner"):
+            creator._resume_completed_boot(catalog, candidate, receipt, run, disk_fd)
+    finally:
+        process.communicate("", timeout=5)
+        os.close(disk_fd)
+    assert (vm / ".create-state").read_bytes() == markers
+    assert list(run.iterdir()) == []
+
+
 def test_fresh_disk_preserves_original_bytes_identity_companions_and_both_locks(catalog):
     candidate, state = _incomplete_vm(catalog)
     vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"

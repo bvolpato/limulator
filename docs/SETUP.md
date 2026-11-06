@@ -45,6 +45,8 @@ Creation verifies firmware hashes, restores a stock cloudOS image to obtain the 
 
 The creator preserves incomplete images and resumes completed stages. It uses a private USB daemon, scoped virtual-device access, and exact process identities. It refuses a conflicting physical Apple device or an existing owner of the guest disk. Never boot the same disk through another launcher while Limulator owns it.
 
+If host verification fails after first boot, rerun the same `create` command. For a matching incomplete, unregistered guest, Limulator preserves the previous stage record and reruns boot and verification while keeping restore and guest installation complete. It refuses this recovery while another process owns the disk. Use `start` for a guest that is already registered.
+
 If an interrupted restore leaves partial APFS media and a later attempt reports `newfs_apfs: /dev/disk1 is already a synthesized APFS device: Resource busy`, the explicit recovery option is:
 
 ```sh

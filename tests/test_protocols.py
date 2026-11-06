@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import socket
@@ -8,6 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -229,8 +232,136 @@ def test_vsock_buffer_options_accept_native_uint64_on_kernel_socket() -> None:
             getattr(socket, "SO_VM_SOCKETS_BUFFER_MAX_SIZE", 2),
             getattr(socket, "SO_VM_SOCKETS_BUFFER_SIZE", 0),
         ):
-            raw = sock.getsockopt(af_vsock, option, struct.calcsize("@Q"))
-            assert struct.unpack("@Q", raw) == (4 << 20,)
+            if hasattr(socket, "AF_VSOCK"):
+                size = sock.getsockopt(af_vsock, option)
+            else:
+                raw = sock.getsockopt(af_vsock, option, struct.calcsize("@Q"))
+                size = struct.unpack("@Q", raw)[0]
+            assert size == 4 << 20
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="AF_VSOCK is Linux-specific")
+def test_guest_connects_to_kernel_vsock_loopback_without_a_guest(monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        listener = socket.socket(getattr(socket, "AF_VSOCK", 40), socket.SOCK_STREAM)
+    except OSError as exc:
+        pytest.skip(f"host kernel does not provide AF_VSOCK: {exc}")
+    with listener:
+        listener.settimeout(1)
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.bind.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+        libc.bind.restype = ctypes.c_int
+        libc.getsockname.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
+        libc.getsockname.restype = ctypes.c_int
+        libc.accept4.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+        libc.accept4.restype = ctypes.c_int
+        # Linux sockaddr_vm: family, reserved, port, CID, flags, three zero bytes.
+        address = ctypes.create_string_buffer(struct.pack("@HHIIB3x", 40, 0, 0xFFFFFFFF, 1, 0))
+        if libc.bind(listener.fileno(), address, 16) != 0:
+            error = ctypes.get_errno()
+            pytest.skip(f"host kernel cannot bind AF_VSOCK loopback: errno {error}")
+        length = ctypes.c_uint(16)
+        assert libc.getsockname(listener.fileno(), address, ctypes.byref(length)) == 0
+        family, _, port, cid, _ = struct.unpack("@HHIIB3x", address.raw[:16])
+        assert family == 40 and cid == 1
+        listener.listen(1)
+        monkeypatch.setattr(protocols, "_VPHONED_PORT", port)
+        sock, _ = GuestClient(cid=1, timeout=1)._connect(time.monotonic() + 1)
+        with sock:
+            # The managed build also cannot decode an address in socket.accept().
+            descriptor = libc.accept4(listener.fileno(), None, None, socket.SOCK_CLOEXEC)
+            assert descriptor >= 0, ctypes.get_errno()
+            with socket.socket(40, socket.SOCK_STREAM, fileno=descriptor) as peer:
+                peer.settimeout(1)
+                sock.sendall(b"local vsock")
+                assert peer.recv(32) == b"local vsock"
+
+
+@pytest.fixture
+def pending_vsock_connect(monkeypatch: pytest.MonkeyPatch):
+    state = SimpleNamespace(
+        now=100.0, initial_error=errno.EINPROGRESS, socket_error=0, ready=True, interrupted=False, waits=[]
+    )
+
+    class Socket:
+        timeout = None
+
+        def setblocking(self, blocking):
+            assert blocking is False
+
+        def fileno(self):
+            return 10
+
+        def getsockopt(self, level, option):
+            assert (level, option) == (socket.SOL_SOCKET, socket.SO_ERROR)
+            return state.socket_error
+
+        def settimeout(self, value):
+            self.timeout = value
+
+    def connect(descriptor, address, length):
+        assert descriptor == 10
+        assert struct.unpack("@HHIIB3x", ctypes.string_at(address, length)) == (40, 0, 1339, 1, 0)
+        ctypes.set_errno(state.initial_error)
+        return -1 if state.initial_error else 0
+
+    class Selector:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def register(self, sock, event):
+            assert event == protocols.selectors.EVENT_WRITE
+
+        def select(self, timeout):
+            state.waits.append(timeout)
+            state.now += min(timeout, 0.04)
+            if state.interrupted:
+                raise InterruptedError
+            return [(None, protocols.selectors.EVENT_WRITE)] if state.ready else []
+
+    monkeypatch.setattr(protocols.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(connect=connect))
+    monkeypatch.setattr(protocols.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(protocols.time, "monotonic", lambda: state.now)
+    return Socket(), state
+
+
+@pytest.mark.parametrize("initial_error", [0, errno.EINPROGRESS, errno.EINTR])
+def test_linux_vsock_connect_handles_immediate_and_async_completion(pending_vsock_connect, initial_error):
+    sock, state = pending_vsock_connect
+    state.initial_error = initial_error
+    protocols._connect_vsock_linux(sock, 1, 1339, state.now + 0.1)
+    assert 0 < sock.timeout <= 0.1 + 1e-9
+    assert bool(state.waits) == bool(initial_error)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_linux_vsock_connect_reports_syscall_and_pending_socket_errors(pending_vsock_connect, asynchronous):
+    sock, state = pending_vsock_connect
+    state.initial_error = errno.EINPROGRESS if asynchronous else errno.EACCES
+    state.socket_error = errno.ECONNREFUSED
+    with pytest.raises(OSError) as error:
+        protocols._connect_vsock_linux(sock, 1, 1339, state.now + 0.1)
+    assert error.value.errno == (errno.ECONNREFUSED if asynchronous else errno.EACCES)
+    assert sock.timeout is None
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_linux_vsock_pending_connect_obeys_one_deadline_even_with_interrupted_waits(
+    pending_vsock_connect, interrupted
+):
+    sock, state = pending_vsock_connect
+    state.ready = False
+    state.interrupted = interrupted
+    deadline = state.now + 0.1
+    with pytest.raises(ProtocolError, match="timed out while connecting") as error:
+        protocols._connect_vsock_linux(sock, 1, 1339, deadline)
+    assert isinstance(error.value.__cause__, TimeoutError)
+    assert state.now == deadline
+    assert len(state.waits) == 3
+    assert state.waits[0] > state.waits[1] > state.waits[2] > 0
 
 
 def _read_qmp_line(sock: socket.socket) -> dict[str, object]:
