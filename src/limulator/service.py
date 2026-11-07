@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 import re
 import tempfile
@@ -17,6 +18,7 @@ from PIL import Image
 from .applications import inspect_app, prepared_ipa
 from .lifecycle import Runtime
 from .profiles import profile_for, public_metadata
+from .protocols import ProtocolError
 
 
 class DeviceError(RuntimeError):
@@ -284,7 +286,7 @@ class DeviceService:
         if name not in {"home", "lock", "volume-up", "volume-down"}:
             raise DeviceError("Unknown device button")
         with self._interaction():
-            return self.runtime.guest().rpc("input.button", {"name": name})
+            return self.runtime.guest().rpc("input.button", {"name": "power" if name == "lock" else name})
 
     def fold(self, position: str) -> dict:
         if not self.supports_fold:
@@ -303,8 +305,119 @@ class DeviceService:
             return result
 
     def unlock(self) -> dict:
+        method_started = time.monotonic()
         with self._interaction():
-            return self.runtime.guest(timeout=120).rpc("screen.unlock", {"timeout": 60})
+            guest = self.runtime.guest(timeout=120)
+            try:
+                return guest.rpc("screen.unlock", {"timeout": 60})
+            except ProtocolError as exc:
+                if exc.status_code != 400 or not isinstance(exc.details, bytes) or len(exc.details) > 512:
+                    raise
+                try:
+                    response = json.loads(exc.details)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise exc
+                error = response.get("error") if isinstance(response, dict) else None
+                if (
+                    not isinstance(response, dict)
+                    or response.get("type") != "response"
+                    or not isinstance(error, dict)
+                    or error.get("code") != "invalid_operation"
+                    or error.get("message") != "the Lock Screen did not dismiss in time"
+                ):
+                    raise
+
+            deadline = min(method_started + 135, time.monotonic() + 45)
+
+            def rpc(method: str, params: dict | None = None):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DeviceError(
+                        "Touch unlock did not dismiss the Lock Screen before its fallback deadline; unlock it manually"
+                    )
+                return self.runtime.guest(timeout=remaining).rpc(method, params)
+
+            def screen_state() -> tuple[bool, bool]:
+                lock = rpc("notify.state", {"name": "com.apple.springboard.lockstate"})
+                blanked = rpc("notify.state", {"name": "com.apple.springboard.hasBlankedScreen"})
+                if (
+                    not isinstance(lock, dict)
+                    or type(lock.get("state")) is not int
+                    or lock["state"] < 0
+                    or not isinstance(blanked, dict)
+                    or type(blanked.get("state")) is not int
+                    or blanked["state"] < 0
+                ):
+                    raise DeviceError("Guest returned invalid lock screen state")
+                return lock["state"] != 0, blanked["state"] != 0
+
+            def wait_for_state(*, wait_for_unlock: bool = False) -> tuple[bool, bool]:
+                while True:
+                    locked, screen_off = screen_state()
+                    if not screen_off and (not wait_for_unlock or not locked):
+                        return locked, screen_off
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        message = (
+                            "Touch unlock did not dismiss the Lock Screen; unlock it manually"
+                            if wait_for_unlock
+                            else "Touch unlock could not wake the display; unlock it manually"
+                        )
+                        raise DeviceError(message)
+                    time.sleep(min(0.15, remaining))
+
+            locked, screen_off = screen_state()
+            was_locked, was_screen_off = locked, screen_off
+            if not locked and not screen_off:
+                return {
+                    "locked": False,
+                    "screen_off": False,
+                    "was_locked": was_locked,
+                    "was_screen_off": was_screen_off,
+                }
+
+            width = height = None
+            if locked:
+                dimensions = rpc("device.screen")
+                if not isinstance(dimensions, dict):
+                    raise DeviceError("Guest returned invalid screen geometry")
+                width, height = dimensions.get("width"), dimensions.get("height")
+
+                def valid_dimension(value) -> bool:
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        return False
+                    try:
+                        return math.isfinite(float(value)) and value > 0
+                    except (OverflowError, ValueError):
+                        return False
+
+                if any(not valid_dimension(value) for value in (width, height)):
+                    raise DeviceError("Guest returned invalid screen geometry")
+
+            rpc("input.button", {"name": "wake"})
+            locked, screen_off = wait_for_state()
+            if locked:
+                if width is None or height is None:
+                    raise DeviceError("Lock state changed during wake; unlock the device manually")
+                rpc(
+                    "input.swipe",
+                    {
+                        "x1": width / 2,
+                        "y1": height * 0.96,
+                        "x2": width / 2,
+                        "y2": height * 0.30,
+                        "seconds": 0.7,
+                        "steps": 20,
+                    },
+                )
+                locked, screen_off = wait_for_state(wait_for_unlock=True)
+
+            return {
+                "locked": locked,
+                "screen_off": screen_off,
+                "was_locked": was_locked,
+                "was_screen_off": was_screen_off,
+            }
 
     def apps(self) -> list[dict]:
         self._check_available()

@@ -10,7 +10,7 @@ The selected backend is [vphone-linux](https://github.com/YahiaAngelo/vphone-lin
 
 Limulator keeps that backend as a separate source dependency. [The lock file](third_party.lock.json) pins its revisions and the checksums of our [reviewed patches](patches/). Emulator and guest-component fixes should be developed in focused forks and contributed upstream; Limulator owns the build workflow, device management, console, and acceptance checks. Copying the emulator into this repository would duplicate its maintenance and make upstream updates harder to review.
 
-See [the setup guide](docs/SETUP.md) for installation and app commands, and [the research](docs/RESEARCH.md) and [architecture](docs/ARCHITECTURE.md) for the decision, acceptance criteria, and fidelity limits.
+For the normal development loop, use [Build, deploy, and test apps](docs/APP_WORKFLOW.md). It reuses an existing guest and separates app updates from the one-time firmware and tool setup. See [the setup guide](docs/SETUP.md) for installation, and [the research](docs/RESEARCH.md) and [architecture](docs/ARCHITECTURE.md) for the decision, acceptance criteria, and fidelity limits.
 
 ## Development
 

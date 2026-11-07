@@ -167,6 +167,11 @@
       "path": "patches/0022-native-toolbar-private-socket.patch",
       "sha256": "bbb5917f2c3bb9a74d37ab7ab5845bdf515dc23a06edebafd156ee149b99759d",
       "target": "backend"
+    },
+    {
+      "path": "patches/0023-vphone-window-button-mapping.patch",
+      "sha256": "b78e1814f0cec3133930a62714ab09b31823a703bef5b00aaabbb229609a0645",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

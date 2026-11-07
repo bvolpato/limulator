@@ -1,4 +1,5 @@
 import io
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -7,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+import limulator.service as service_module
+from limulator.protocols import ProtocolError
 from limulator.service import DeviceError, DeviceService, Frame
 
 
@@ -62,6 +65,18 @@ def _ppm_payload(rows, *, row_padding=b""):
     width = len(rows[0])
     packed_rows = [bytes(channel for pixel in row for channel in pixel) for row in rows]
     return f"P6\n{width} {height}\n255\n".encode() + b"".join(row + row_padding for row in packed_rows)
+
+
+@pytest.mark.parametrize(
+    ("button", "guest_button"),
+    [("home", "home"), ("lock", "power"), ("volume-up", "volume-up"), ("volume-down", "volume-down")],
+)
+def test_button_maps_lock_to_the_guest_power_action(button, guest_button):
+    runtime = Runtime()
+
+    DeviceService(runtime).button(button)
+
+    assert runtime.client.calls == [("input.button", {"name": guest_button})]
 
 
 def test_folded_frame_rotation_and_tap_use_the_same_physical_geometry():
@@ -238,6 +253,159 @@ def test_unlock_allows_sixty_seconds_in_the_guest_with_a_longer_host_deadline():
     DeviceService(runtime).unlock()
     assert timeouts == [120]
     assert runtime.client.calls == [("screen.unlock", {"timeout": 60})]
+
+
+def _no_passcode_unlock_error(
+    *, code="invalid_operation", message="the Lock Screen did not dismiss in time", status=400
+):
+    body = {
+        "error": {"code": code, "message": message},
+        "id": 1,
+        "type": "response",
+    }
+    return ProtocolError("screen unlock failed", status_code=status, details=json.dumps(body).encode())
+
+
+def _fallback_runtime(*, lock_states, blanked_states, geometry=None, before_unlock_error=None):
+    runtime = Runtime()
+    state_sequences = {
+        "com.apple.springboard.lockstate": list(lock_states),
+        "com.apple.springboard.hasBlankedScreen": list(blanked_states),
+    }
+    state_indexes = dict.fromkeys(state_sequences, 0)
+
+    def rpc(method, params=None):
+        runtime.client.calls.append((method, params))
+        if method == "screen.unlock":
+            if before_unlock_error is not None:
+                before_unlock_error()
+            raise _no_passcode_unlock_error()
+        if method == "notify.state":
+            name = params["name"]
+            values = state_sequences[name]
+            index = state_indexes[name]
+            state_indexes[name] = min(index + 1, len(values) - 1)
+            return {"state": values[index]}
+        if method == "device.screen":
+            return geometry if geometry is not None else {"width": 393, "height": 852}
+        return {"sent": True}
+
+    runtime.client.rpc = rpc
+    return runtime
+
+
+def test_unlock_uses_one_touch_swipe_after_waking_a_dark_lock_screen():
+    runtime = _fallback_runtime(lock_states=[1, 1, 0], blanked_states=[1, 0, 0])
+
+    result = DeviceService(runtime).unlock()
+
+    assert result == {"locked": False, "screen_off": False, "was_locked": True, "was_screen_off": True}
+    calls = runtime.client.calls
+    assert [method for method, _ in calls if method.startswith("input.")] == ["input.button", "input.swipe"]
+    assert calls[4] == ("input.button", {"name": "wake"})
+    assert calls[7] == (
+        "input.swipe",
+        {"x1": 196.5, "y1": 817.92, "x2": 196.5, "y2": 255.6, "seconds": 0.7, "steps": 20},
+    )
+
+
+def test_unlock_wakes_a_lit_lock_screen_before_swiping():
+    runtime = _fallback_runtime(lock_states=[1, 1, 0], blanked_states=[0, 0, 0])
+
+    result = DeviceService(runtime).unlock()
+
+    assert result == {"locked": False, "screen_off": False, "was_locked": True, "was_screen_off": False}
+    assert [method for method, _ in runtime.client.calls if method.startswith("input.")] == [
+        "input.button",
+        "input.swipe",
+    ]
+    assert runtime.client.calls[4] == ("input.button", {"name": "wake"})
+    assert runtime.client.calls[5:7] == [
+        ("notify.state", {"name": "com.apple.springboard.lockstate"}),
+        ("notify.state", {"name": "com.apple.springboard.hasBlankedScreen"}),
+    ]
+    assert runtime.client.calls[7][0] == "input.swipe"
+
+
+def test_unlock_returns_without_geometry_or_input_when_already_unlocked_and_lit():
+    runtime = _fallback_runtime(lock_states=[0], blanked_states=[0])
+
+    result = DeviceService(runtime).unlock()
+
+    assert result == {"locked": False, "screen_off": False, "was_locked": False, "was_screen_off": False}
+    assert not any(
+        method == "device.screen" or method.startswith("input.") for method, _ in runtime.client.calls
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "status"),
+    [
+        ("invalid_operation", "a passcode is required", 400),
+        ("invalid_operation", "another operation failed", 400),
+        ("invalid_operation", "the Lock Screen did not dismiss in time", 503),
+    ],
+)
+def test_unlock_propagates_other_errors_without_touch_input(code, message, status):
+    runtime = Runtime()
+    error = _no_passcode_unlock_error(code=code, message=message, status=status)
+
+    def rpc(method, params=None):
+        runtime.client.calls.append((method, params))
+        raise error
+
+    runtime.client.rpc = rpc
+    with pytest.raises(ProtocolError) as caught:
+        DeviceService(runtime).unlock()
+
+    assert caught.value is error
+    assert runtime.client.calls == [("screen.unlock", {"timeout": 60})]
+
+
+def test_unlock_rejects_invalid_geometry_before_sending_input():
+    runtime = _fallback_runtime(lock_states=[1], blanked_states=[1], geometry={"width": 0, "height": 852})
+
+    with pytest.raises(DeviceError, match="invalid screen geometry"):
+        DeviceService(runtime).unlock()
+
+    assert not any(method.startswith("input.") for method, _ in runtime.client.calls)
+
+
+@pytest.mark.parametrize(
+    ("elapsed_before_error", "expected_deadline", "fallback_budget"), [(0, 45, 45), (100, 135, 35)]
+)
+def test_unlock_persistent_lock_fallback_is_bounded(
+    monkeypatch, elapsed_before_error, expected_deadline, fallback_budget
+):
+    clock = {"now": 0.0}
+    timeouts = []
+    runtime = _fallback_runtime(
+        lock_states=[1],
+        blanked_states=[0],
+        before_unlock_error=lambda: clock.__setitem__("now", elapsed_before_error),
+    )
+
+    def monotonic():
+        return clock["now"]
+
+    def sleep(duration):
+        clock["now"] += duration
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+    monkeypatch.setattr(service_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(service_module.time, "sleep", sleep)
+
+    with pytest.raises(DeviceError, match="did not dismiss the Lock Screen"):
+        DeviceService(runtime).unlock()
+
+    assert clock["now"] == expected_deadline
+    assert all(0 < timeout <= fallback_budget for timeout in timeouts[1:])
+    assert runtime.client.calls[4] == ("input.button", {"name": "wake"})
+    assert sum(method == "input.swipe" for method, _ in runtime.client.calls) == 1
 
 
 def test_phone_cannot_send_fold_commands_to_guest():

@@ -18,7 +18,7 @@ uv run limulator doctor
 
 The backend and xtool bootstraps pin their source revisions and downloaded tools. Xtool is built from its pinned Swift source using the private Swift toolchain. It installs the full Darwin SDK from your Xcode 27.2 archive and reads the SDK version from its settings when it links the app. Set `LIMULATOR_XCODE_XIP` if the archive is not at `~/Downloads/Xcode_27.2.xip`.
 
-Resource-intensive operations use a systemd scope with a 32 GiB soft memory limit and 40 GiB hard limit. Builds, creation, and headless guests allow up to 4 GiB of swap; native interactive windows disable swap to keep their working memory resident. They require at least 32 GiB available host RAM and 4 GiB free swap before starting. Available RAM is the current headroom, not the machine's installed memory; a 64 GiB or larger workstation is recommended. Allow roughly 100 GiB free disk for one profile, or 200 GiB for all three profiles, the SDK, firmware caches, and restore work. Preserved recovery disks require additional space.
+Resource-intensive operations use a systemd scope with a 32 GiB soft memory limit and 40 GiB hard limit. Backend builds, creation, and headless guests allow up to 4 GiB of swap; native interactive windows disable swap to keep their working memory resident. They require at least 32 GiB available host RAM and 4 GiB free swap before starting. Available RAM is the current headroom, not the machine's installed memory; a 64 GiB or larger workstation is recommended. Allow roughly 100 GiB free disk for one profile, or 200 GiB for all three profiles, the SDK, firmware caches, and restore work. Preserved recovery disks require additional space.
 
 The native vphone CLI uses a Release build. After updating its patches, rebuild it with `uv run limulator bootstrap cli`; an absent Release product stops creation instead of triggering an implicit build. The xtool host executable uses a Debug build to avoid a Swift 6.4.1 optimizer crash. The app's `--configuration` setting remains independent.
 
@@ -78,13 +78,15 @@ uv run limulator --device duo start --wait 600
 uv run limulator --device duo stop
 ```
 
-`start --window` opens the native emulator window with Home, Lock, volume, and Screenshot controls to the right of the device. Screenshots save only when you press Screenshot. The toolbar uses the private control socket of that run and ends with its emulator. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
+`start --window` opens the native emulator window with Home, Lock, volume, and Screenshot controls to the right of the device. Home wakes and swipes a locked phone; on an unlocked phone it sends Home. Power wakes a sleeping display or sends the virtual side-button action. Passcodes require your input. Screenshots save only when you press Screenshot. The toolbar uses the private control socket of that run and ends with its emulator. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
 
 In the console, the destination picker lists registered devices and profiles that can be created. Selecting a registered device shows its OS, geometry, support status, and named Start and Stop controls. Stop waits for the owned guest to shut down and rejects duplicate requests while it is in progress. Duo alone exposes fold controls. Selecting a profile without a registered device shows a copyable creation command; creation and firmware downloads run through the terminal. Refresh the picker after registering or creating a device.
 
 Each console request targets its device by name. Switching the picker clears the old display and ignores responses from the previous selection. The `serve --device` selection remains the default for clients that omit a device name.
 
 ## Build and run an app
+
+For repeated app development on an existing guest, follow [Build, deploy, and test apps](APP_WORKFLOW.md). Keep that guest and its build caches; another app does not require another restore.
 
 The xtool bootstrap installs a private xtool executable and its full Darwin SDK from your own Xcode archive. Then build and run CounterLab:
 
@@ -100,7 +102,7 @@ uv run limulator --device duo run examples/CounterLab --xtool /path/to/xtool
 
 Limulator runs `xtool dev build --configuration debug --ipa`, inspects the resulting device binary, uploads it, and asks the guest to install and sign it. Host-side Apple distribution credentials are not required for this research guest. Simulator binaries and encrypted App Store executables are rejected. The pinned guest launch API does not accept app launch arguments; Limulator rejects them rather than ignoring them.
 
-`run` starts the guest if needed, then wakes and unlocks it after installation and immediately before launch. An unlock error stops the command before launch. The separate `launch` command does not wake or unlock the guest.
+`run` starts the guest if needed, then wakes and unlocks it after installation and immediately before launch. A known no-passcode Home timeout triggers one bounded touch-unlock fallback; other unlock errors stop the command before launch. The separate `launch` command does not wake or unlock the guest.
 
 You can also install an existing artifact:
 
