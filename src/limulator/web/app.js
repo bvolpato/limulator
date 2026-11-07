@@ -8,6 +8,7 @@
   const ACTION_TIMEOUT_MS = 30000;
   const FOLD_TIMEOUT_MS = 90000;
   const LAUNCH_TIMEOUT_MS = 150000;
+  const UNLOCK_TIMEOUT_MS = 150000;
   const INSTALL_TIMEOUT_MS = 600000;
   const STOP_TIMEOUT_MS = 150000;
   const TAP_SLOP_PX = 8;
@@ -62,6 +63,7 @@
     refreshDevices: byId("refresh-devices"),
     startDevice: byId("start-device"),
     stopDevice: byId("stop-device"),
+    unlockDevice: byId("unlock-device"),
     foldHeading: byId("fold-heading"),
     foldControls: byId("fold-controls"),
     foldUnavailable: byId("fold-unavailable"),
@@ -92,6 +94,7 @@
   let catalogInFlight = false;
   let appsRequest = { current: null };
   const operations = new Map();
+  const pendingReads = new Map();
 
   function selectionIsCurrent(name, epoch) {
     return selectedName === name && selectionEpoch === epoch;
@@ -117,7 +120,6 @@
 
   function resetPolling() {
     selectionEpoch++;
-    for (const request of [statusRequest, screenRequest, appsRequest]) request.current?.controller.abort();
     statusRequest = { current: null };
     screenRequest = { current: null };
     appsRequest = { current: null };
@@ -352,6 +354,7 @@
     els.stopDevice.textContent = mutationInFlight === "/api/stop" || category === "stopping" ? `Stopping ${selectedName}…` : `Stop ${selectedName || "device"}`;
     els.startDevice.disabled = !selectedName || busy || !["offline", "error"].includes(category);
     els.stopDevice.disabled = !selectedName || busy || !["connected", "booting"].includes(category);
+    els.unlockDevice.disabled = !connected || busy;
     els.deviceText.disabled = !connected || busy;
     els.sendText.disabled = !connected || busy;
     els.chooseIpa.disabled = !connected || busy;
@@ -448,15 +451,28 @@
     if (requestRef?.current === request) requestRef.current = null;
   }
 
+  function beginRead(name) {
+    const reads = pendingReads.get(name) || new Set();
+    pendingReads.set(name, reads);
+    let finish;
+    const completion = new Promise((resolve) => { finish = resolve; });
+    reads.add(completion);
+    return (error = null) => {
+      finish(error);
+      reads.delete(completion);
+      if (pendingReads.get(name) === reads && reads.size === 0) pendingReads.delete(name);
+    };
+  }
+
   function scheduleStatus(delay = POLL_STATUS_MS) {
     window.clearTimeout(statusTimer);
-    if (document.hidden) return;
+    if (document.hidden || operations.has(selectedName)) return;
     statusTimer = window.setTimeout(pollStatus, delay);
   }
 
   function scheduleScreen(delay = POLL_SCREEN_MS) {
     window.clearTimeout(screenTimer);
-    if (document.hidden) return;
+    if (document.hidden || operations.has(selectedName)) return;
     screenTimer = window.setTimeout(pollScreen, delay);
   }
 
@@ -573,10 +589,12 @@
   }
 
   async function pollStatus() {
-    if (document.hidden || statusInFlight || !selectedName) return;
+    if (document.hidden || statusInFlight || !selectedName || operations.has(selectedName)) return;
     const name = selectedName;
     const epoch = selectionEpoch;
     const requestRef = statusRequest;
+    const finishRead = beginRead(name);
+    let readError;
     statusInFlight = true;
     const previousCategory = currentCategory();
     const previousAppsKey = deviceAppsKey();
@@ -590,6 +608,7 @@
       statusError = "";
       screenError = "";
     } catch (error) {
+      readError = error;
       if (!selectionIsCurrent(name, epoch)) return;
       if (!(document.hidden && error?.name === "AbortError")) {
         statusError = error instanceof Error ? error.message : String(error);
@@ -597,6 +616,7 @@
         clearScreen();
       }
     } finally {
+      finishRead(readError);
       if (!selectionIsCurrent(name, epoch)) return;
       statusInFlight = false;
       renderStatus();
@@ -637,10 +657,12 @@
   }
 
   async function pollScreen() {
-    if (document.hidden || screenInFlight || !selectedName) return;
+    if (document.hidden || screenInFlight || !selectedName || operations.has(selectedName)) return;
     const name = selectedName;
     const epoch = selectionEpoch;
     const requestRef = screenRequest;
+    const finishRead = beginRead(name);
+    let readError;
     screenInFlight = true;
     try {
       if (!deviceConnected()) {
@@ -667,6 +689,7 @@
       } finally {
         releaseRequest(requestRef);
       }
+      finishRead();
       if (!selectionIsCurrent(name, epoch)) return;
       const nextUrl = URL.createObjectURL(blob);
       try {
@@ -692,12 +715,14 @@
         throw error;
       }
     } catch (error) {
+      readError = error;
       if (!selectionIsCurrent(name, epoch)) return;
       if (deviceConnected() && !(document.hidden && error?.name === "AbortError")) {
         screenError = error instanceof Error ? error.message : String(error);
         clearScreen();
       }
     } finally {
+      finishRead(readError);
       if (!selectionIsCurrent(name, epoch)) return;
       screenInFlight = false;
       scheduleScreen();
@@ -705,10 +730,12 @@
   }
 
   async function loadApps(showErrorNotice = true) {
-    if (appsLoading || !selectedName || !deviceConnected()) return;
+    if (appsLoading || !selectedName || !deviceConnected() || operations.has(selectedName)) return;
     const name = selectedName;
     const epoch = selectionEpoch;
     const requestRef = appsRequest;
+    const finishRead = beginRead(name);
+    let readError;
     appsLoading = true;
     appError = "";
     updateAppsView();
@@ -723,11 +750,13 @@
         .filter((app) => app && typeof app.bundle_id === "string" && app.bundle_id.trim())
         .map((app) => ({ bundle_id: app.bundle_id.trim(), name: stringValue(app.name) }));
     } catch (error) {
+      readError = error;
       if (!selectionIsCurrent(name, epoch)) return;
       installedApps = [];
       appError = error instanceof Error ? error.message : String(error);
       if (showErrorNotice) showNotice(appError, true);
     } finally {
+      finishRead(readError);
       if (!selectionIsCurrent(name, epoch)) return;
       appsLoading = false;
       updateAppsView();
@@ -770,11 +799,21 @@
     const requestRef = { current: null };
     operations.set(name, operation);
     syncOperation();
-    if (lifecycle) resetPolling();
-    const epoch = selectionEpoch;
+    window.clearTimeout(statusTimer);
+    window.clearTimeout(screenTimer);
+    let epoch = selectionEpoch;
+    let refreshApps = false;
     updateControls();
     showNotice(pendingMessage, false, 0);
     try {
+      // Aborting fetch does not stop a capture already running on the server.
+      const readErrors = await Promise.all(pendingReads.get(name) || []);
+      const readError = readErrors.find(Boolean);
+      if (readError) throw readError;
+      if (lifecycle && selectionIsCurrent(name, epoch)) {
+        resetPolling();
+        epoch = selectionEpoch;
+      }
       let requestBody;
       if (file) {
         requestBody = new FormData();
@@ -795,9 +834,7 @@
       if (lifecycle) deviceStatus = result;
       const serverMessage = result && typeof result === "object" ? stringValue(result.message) : "";
       showNotice(serverMessage || successMessage, false);
-      if (refreshAppsAfter && selectionIsCurrent(name, epoch)) {
-        await loadApps(false);
-      }
+      refreshApps = refreshAppsAfter;
       return true;
     } catch (error) {
       if (selectionIsCurrent(name, epoch)) showNotice(error instanceof Error ? error.message : String(error), true);
@@ -807,6 +844,7 @@
       if (selectedName === name) {
         syncOperation();
         renderStatus();
+        if (refreshApps && selectionIsCurrent(name, epoch)) void loadApps(false);
         scheduleStatus(0);
         scheduleScreen(0);
       }
@@ -914,6 +952,11 @@
       pendingMessage: `Shutting down ${selectedName} safely…`,
       successMessage: "The selected device has stopped.",
     }));
+    els.unlockDevice.addEventListener("click", () => void mutate("/api/unlock", {
+      timeoutMs: UNLOCK_TIMEOUT_MS,
+      pendingMessage: "Unlocking device…",
+      successMessage: "Unlock request completed.",
+    }));
     els.copyCreateCommand.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(els.createCommand.value);
@@ -1018,9 +1061,6 @@
       if (document.hidden) {
         window.clearTimeout(statusTimer);
         window.clearTimeout(screenTimer);
-        statusRequest.current?.controller.abort();
-        screenRequest.current?.controller.abort();
-        appsRequest.current?.controller.abort();
         return;
       }
       scheduleStatus(0);

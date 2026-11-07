@@ -30,7 +30,8 @@ function setup(mode) {
     AbortController, FormData,
     STATUS_TIMEOUT_MS: 20, ACTION_TIMEOUT_MS: 20,
     selectedName: 'duo', selectionEpoch: 0, catalogInFlight: false,
-    catalog: {}, operations: new Map(),
+    statusTimer: null, screenTimer: null,
+    catalog: {}, operations: new Map(), pendingReads: new Map(),
     els: { refreshDevices: {}, destinationSummary: {} },
     window: {
       setTimeout: (...args) => { const timer = setTimeout(...args); timers.add(timer); return timer; },
@@ -98,6 +99,211 @@ async function bounded(promise) {
   assert.equal(context.catalogInFlight, false);
   assert.equal(timers.size, 0);
   assert(observed.notices.some((message) => /Device catalog is unavailable/.test(message)));
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+    source = Path(__file__).resolve().parents[1] / "src/limulator/web/app.js"
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=5)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_console_drains_reads_before_commands_and_unlocks_explicitly():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the browser request functions")
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+function setup(stalledPaths = []) {
+  const elements = new Map();
+  function element(id) {
+    if (!elements.has(id)) elements.set(id, {
+      value: '', hidden: false, textContent: '', dataset: {}, listeners: {},
+      addEventListener(type, listener) { this.listeners[type] = listener; },
+      removeAttribute() {}, classList: { toggle() {} },
+    });
+    return elements.get(id);
+  }
+  const timers = new Map();
+  const calls = [], notices = [], screens = [], reads = [], commands = [];
+  let nextTimer = 0;
+  const context = {
+    AbortController, FormData, Blob, URL, Uint8Array, console,
+    window: {
+      location: { origin: 'http://console.test' },
+      setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
+      clearTimeout(id) { timers.delete(id); },
+    },
+    document: {
+      hidden: false, getElementById: element,
+      querySelector: () => ({ content: 'session-token' }),
+      querySelectorAll: () => [], addEventListener() {},
+    },
+    fetch: async (path, options) => {
+      const url = new URL(path, 'http://console.test');
+      const call = { path: url.pathname, name: url.searchParams.get('device'), options };
+      calls.push(call);
+      if (options.method === 'POST') {
+        const body = deferred();
+        const response = { ok: true, status: 409, statusText: 'Conflict', text: () => body.promise };
+        commands.push({ ...call, body, response });
+        return response;
+      }
+      if (url.pathname === '/api/screen.png') {
+        const body = deferred();
+        options.signal.addEventListener('abort', () => body.reject(new DOMException('aborted', 'AbortError')));
+        screens.push({ ...call, body });
+        return { ok: true, headers: { get: () => 'frame' }, blob: () => body.promise };
+      }
+      if (stalledPaths.includes(url.pathname)) {
+        const body = deferred();
+        reads.push({ ...call, body });
+        return { ok: true, text: () => body.promise };
+      }
+      return { ok: true, text: async () => JSON.stringify(url.pathname === '/api/apps'
+        ? { apps: [] } : { state: 'connected', device: {} }) };
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(source.replace('  initialize();', `
+    renderStatus = () => updateControls();
+    updateAppsView = updateDestination = clearScreen = () => {};
+    decodeImage = async () => ({ width: 1, height: 1 });
+    showNotice = (message, isError) => globalThis.notices.push({ message, isError });
+    globalThis.api = {
+      mutate, pollScreen, pollStatus, loadApps, bindEvents, updateControls, selectDestination,
+      select(name) {
+        selectDestination('device:' + name);
+        deviceStatus = { state: 'connected', device: {} };
+        updateControls();
+      },
+      disconnect() { deviceStatus = { state: 'offline' }; updateControls(); },
+      get operationCount() { return operations.size; },
+      get selectedName() { return selectedName; },
+    };
+    catalog.devices = ['duo', 'phone'].map((name) => ({ name }));
+  `), Object.assign(context, { notices }));
+  return { api: context.api, calls, screens, reads, commands, notices, timers, element };
+}
+const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
+(async () => {
+  {
+    const { api, calls, screens, commands, timers } = setup();
+    api.select('duo');
+    const screen = api.pollScreen();
+    await flush();
+    const command = api.mutate('/api/launch', { body: { bundle_id: 'com.brutv' } });
+    await flush();
+    assert.equal(commands.length, 0, 'launch must wait for the active screen response body');
+    await Promise.all([api.pollScreen(), api.pollStatus(), api.loadApps()]);
+    assert.equal(calls.length, 1, 'no new device reads may start while launch waits');
+    assert.equal(screens[0].options.signal.aborted, false, 'draining must not abort server work');
+    screens[0].body.resolve(png());
+    await screen;
+    await flush();
+    assert.equal(commands.length, 1);
+    await Promise.all([api.pollScreen(), api.pollStatus(), api.loadApps()]);
+    assert.equal(calls.length, 2, 'reads must stay paused until the mutation body completes');
+    commands[0].body.resolve('{}');
+    assert.equal(await command, true);
+    assert.equal(api.operationCount, 0);
+    assert([...timers.values()].some(({ delay }) => delay === 0), 'polling must resume after completion');
+    await api.pollStatus();
+    assert(calls.some(({ path }) => path === '/api/status'));
+  }
+  for (const path of ['/api/status', '/api/apps']) {
+    const { api, reads, commands } = setup([path]);
+    api.select('duo');
+    const read = path === '/api/status' ? api.pollStatus() : api.loadApps();
+    await flush();
+    const command = api.mutate('/api/launch');
+    await flush();
+    assert.equal(commands.length, 0, `launch must drain ${path} as well as screen capture`);
+    reads[0].body.resolve(JSON.stringify(path === '/api/status'
+      ? { state: 'connected', device: {} } : { apps: [] }));
+    await read;
+    await flush();
+    assert.equal(commands.length, 1);
+    commands[0].body.resolve('{}');
+    assert.equal(await command, true);
+  }
+  {
+    const { api, screens, commands, notices, timers } = setup();
+    api.select('duo');
+    const screen = api.pollScreen();
+    await flush();
+    const command = api.mutate('/api/stop', { lifecycle: true });
+    await flush();
+    assert.equal(screens[0].options.signal.aborted, false);
+    const deadline = [...timers.values()].find(({ delay }) => delay === 12000);
+    assert(deadline, 'the active read must retain its timeout');
+    deadline.callback();
+    await screen;
+    assert.equal(await command, false);
+    assert.equal(commands.length, 0, 'a timed-out read must not be followed by a speculative mutation');
+    assert.equal(api.operationCount, 0);
+    assert(notices.some(({ message, isError }) => isError && /timed out/.test(message)));
+  }
+  {
+    const { api, screens, commands, calls } = setup();
+    api.select('duo');
+    const screen = api.pollScreen();
+    await flush();
+    const oldCommand = api.mutate('/api/launch');
+    api.select('phone');
+    assert.equal(screens[0].options.signal.aborted, false, 'switching devices must drain the old request');
+    await api.pollStatus();
+    const newCommand = api.mutate('/api/input');
+    await flush();
+    assert.equal(commands.length, 1, 'an old device read must not block a different device');
+    assert.equal(commands[0].name, 'phone');
+    commands[0].body.resolve('{}');
+    assert.equal(await newCommand, true);
+    screens[0].body.resolve(png());
+    await screen;
+    await flush();
+    assert.equal(commands.length, 2);
+    assert.equal(commands[1].name, 'duo', 'the queued command must keep its original target');
+    commands[1].body.resolve('{}');
+    assert.equal(await oldCommand, true);
+    assert.equal(api.selectedName, 'phone');
+    assert.equal(api.operationCount, 0);
+    assert(calls.some(({ path, name }) => path === '/api/status' && name === 'phone'));
+  }
+  {
+    const { api, element, commands, notices, timers } = setup();
+    api.bindEvents();
+    api.select('phone');
+    const unlock = element('unlock-device');
+    assert.equal(unlock.disabled, false);
+    unlock.listeners.click();
+    await flush();
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].path, '/api/unlock');
+    assert.equal(unlock.disabled, true);
+    assert([...timers.values()].some(({ delay }) => delay === 150000), 'unlock must allow the 120s host RPC');
+    commands[0].body.resolve('{"message":"Unlocked"}');
+    await flush();
+    assert.equal(unlock.disabled, false);
+    assert(notices.some(({ message, isError }) => message === 'Unlocked' && !isError));
+    unlock.listeners.click();
+    await flush();
+    commands[1].response.ok = false;
+    commands[1].body.resolve('{"detail":"Unlock failed"}');
+    await flush();
+    assert.equal(unlock.disabled, false);
+    assert(notices.some(({ message, isError }) => message === 'Unlock failed' && isError));
+    api.disconnect();
+    assert.equal(unlock.disabled, true);
+    assert.equal(commands.length, 2, 'unlock must not retry or fall back to a Home command');
+  }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 """
     source = Path(__file__).resolve().parents[1] / "src/limulator/web/app.js"

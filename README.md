@@ -2,7 +2,7 @@
 
 Run an iPhone app built with xtool on a local Linux workstation. Install the app into a real iOS guest, interact with it, capture its screen, and run repeatable checks from the terminal or a local web console.
 
-Development status: app compilation, host protocols, lifecycle safeguards, and the console have local validation. A diagnostic iPhone 16 guest running iOS 27.0.1 has rendered its native lock screen and BruTV login UI, with BruTV verified as the frontmost app. That guest still reports DataMigrator `success: false` for build `24A446`, so clean creation and release acceptance remain blocked. Repeatable startup, native input, accessibility control automation, persistence, playback, software postures, app performance, and Duo/iPad runtime acceptance remain unverified.
+Development status: app compilation, host protocols, lifecycle safeguards, and the console have local validation. A diagnostic iPhone 16 guest running iOS 27.0.1 has rendered BruTV, with the app verified as frontmost. Console unlock, launch, and a coordinate tap focusing its empty server-address field have been observed. That guest still reports DataMigrator `success: false` for build `24A446`, so clean creation and release acceptance remain blocked. Repeatable startup, text entry, accessibility control automation, persistence, playback, software postures, app performance, and Duo/iPad runtime acceptance remain unverified.
 
 Limulator uses an emulated ARM64 iPhone. UIKit and SwiftUI run inside iOS; the console displays frames from that guest. A remote Mac and replacement web UI are not the execution path.
 

@@ -677,7 +677,7 @@ h1 {
 
 .control-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9px;
 }
 
@@ -738,6 +738,12 @@ h1 {
   border-bottom: 0;
   border-radius: 5px 5px 0 0;
   content: "";
+}
+
+.unlock-glyph::after {
+  left: 9px;
+  transform: rotate(25deg);
+  transform-origin: bottom left;
 }
 
 .section-divider {

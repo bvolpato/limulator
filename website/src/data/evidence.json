@@ -29,8 +29,8 @@
     "proofLabel": "NATIVE ACCEPTANCE",
     "workflowValue": "Diagnostic launch only",
     "captureValue": "Diagnostic frame captured",
-    "detail": "Native input, accessibility control automation, persistence, playback, software postures, CounterLab interaction acceptance, and app-performance checks remain unverified. One iPhone 16 diagnostic render does not verify Duo or iPad behavior.",
-    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. A diagnostic iPhone 16 guest has rendered BruTV's native login UI, with the app verified as frontmost. DataMigrator still reports success: false for build 24A446. Clean creation, input, accessibility control automation, persistence, playback, app performance, and Duo/iPad runtime acceptance remain unverified."
+    "detail": "The console unlocked the guest, launched BruTV, and focused an empty login field with a coordinate tap. Text entry, accessibility control automation, persistence, playback, software postures, CounterLab interaction acceptance, and app performance remain unverified. Duo and iPad still need native validation.",
+    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. BruTV renders in an iPhone 16 guest, and console unlock, launch, and a coordinate tap focusing its server field have been observed. DataMigrator still reports success: false for build 24A446. Clean creation, repeatable startup, text entry, accessibility control automation, persistence, playback, app performance, and Duo/iPad runtime acceptance remain unverified."
   },
   "workflowNote": "Debug and release CounterLab IPAs build with SDK 27.2. BruTV installed, launched, and rendered on an iPhone 16 diagnostic guest; failed migration still blocks creation acceptance.",
   "faq": {
@@ -41,7 +41,7 @@
       "file": "assets/native/iphone16-brutv-diagnostic-2026-11-07.png",
       "title": "BruTV login · diagnostic capture",
       "alt": "BruTV's native login screen on an iPhone 16 guest, with empty server, username, and password fields.",
-      "context": "Diagnostic QMP capture, 7 Nov 2026. BruTV frontmost verified. Build 24A446 retains migration success: false. Input, playback, and creation acceptance are pending.",
+      "context": "Diagnostic QMP capture, 7 Nov 2026. This frame records BruTV rendering, with the app verified as frontmost. Build 24A446 retains migration success: false; playback and creation acceptance are pending.",
       "device": "iPhone 16 · iPhone17,3",
       "os": "iOS 27.0.1",
       "posture": "Portrait · 1179 × 2556 px",

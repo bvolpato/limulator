@@ -36,7 +36,7 @@
       "scale": "3× native scale",
       "dimensions": "1179 × 2556 px",
       "postures": "Single display · runtime checks pending",
-      "note": "Firmware passed its size and SHA-256 checks. A diagnostic iPhone 16 guest rendered native UI at 1179 × 2556 px on iOS 27.0.1. DataMigrator reports success: false for build 24A446. Input, playback, and clean creation remain unverified.",
+      "note": "A diagnostic iPhone 16 guest rendered native UI at 1179 × 2556 px on iOS 27.0.1. Console unlock, launch, and a tap focusing an empty login field have been observed. DataMigrator reports success: false for build 24A446. Text entry, playback, and clean creation remain unverified.",
       "source": "Diagnostic guest · acceptance pending"
     },
     {
