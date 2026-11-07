@@ -14,19 +14,25 @@ class Guest:
     def __init__(self):
         self.calls = []
         self.angle = 0
+        self.degrees = 0
 
     def rpc(self, method, params=None):
         self.calls.append((method, params))
-        return {"degrees": 0, "fold_angle": self.angle}
+        return {"degrees": self.degrees, "fold_angle": self.angle}
 
 
 class Peer:
     def __init__(self):
         self.calls = []
         self.capture_formats = []
+        self.ppm_payload = None
 
     def screenshot(self, path, *, image_format="png"):
         self.capture_formats.append(image_format)
+        if image_format == "ppm" and self.ppm_payload is not None:
+            with open(path, "wb") as stream:
+                stream.write(self.ppm_payload)
+            return
         image = Image.new("RGB", (4, 6))
         image.putpixel((0, 0), (255, 0, 0))
         image.save(path, format=image_format.upper())
@@ -49,6 +55,13 @@ class Runtime:
     @contextmanager
     def qmp(self):
         yield self.peer
+
+
+def _ppm_payload(rows, *, row_padding=b""):
+    height = len(rows)
+    width = len(rows[0])
+    packed_rows = [bytes(channel for pixel in row for channel in pixel) for row in rows]
+    return f"P6\n{width} {height}\n255\n".encode() + b"".join(row + row_padding for row in packed_rows)
 
 
 def test_folded_frame_rotation_and_tap_use_the_same_physical_geometry():
@@ -74,6 +87,88 @@ def test_capture_compresses_raw_guest_pixels_to_png_outside_qemu():
         expected = Image.new("RGB", (4, 6))
         expected.putpixel((0, 0), (255, 0, 0))
         assert image.tobytes() == expected.tobytes()
+
+
+def test_capture_removes_pixman_padding_from_1398_pixel_rows():
+    width = 1398
+    rows = [
+        [(10, 20, 30), *([(220, 10, 10)] * (width - 1))],
+        [(20, 190, 40)] * width,
+    ]
+    runtime = Runtime()
+    runtime.peer.ppm_payload = _ppm_payload(rows, row_padding=b"\xfa\xfb")
+
+    frame = DeviceService(runtime).capture()
+
+    with Image.open(io.BytesIO(frame.png)) as image:
+        assert image.size == (width, 2)
+        assert image.getpixel((0, 0)) == (10, 20, 30)
+        assert image.getpixel((1, 0)) == (220, 10, 10)
+        assert image.getpixel((0, 1)) == (20, 190, 40)
+        assert image.getpixel((width - 1, 1)) == (20, 190, 40)
+
+
+def test_capture_strips_padded_rows_before_applying_rotation():
+    rows = [
+        [(255, 0, 0), (0, 255, 0), (0, 0, 255)],
+        [(255, 255, 0), (255, 0, 255), (0, 255, 255)],
+    ]
+    runtime = Runtime()
+    runtime.client.degrees = 90
+    runtime.peer.ppm_payload = _ppm_payload(rows, row_padding=b"\xfa\xfb\xfc")
+
+    frame = DeviceService(runtime).capture()
+
+    assert (frame.width, frame.height, frame.rotation) == (2, 3, 90)
+    with Image.open(io.BytesIO(frame.png)) as image:
+        expected = [
+            (255, 255, 0),
+            (255, 0, 0),
+            (255, 0, 255),
+            (0, 255, 0),
+            (0, 255, 255),
+            (0, 0, 255),
+        ]
+        assert image.tobytes() == bytes(channel for pixel in expected for channel in pixel)
+
+
+@pytest.mark.parametrize("width", [3, 4])
+def test_capture_accepts_packed_rows_for_padded_and_aligned_widths(width):
+    rows = [
+        [(10, 20, 30)] + [(200, 10, 10)] * (width - 1),
+        [(20, 190, 40)] * width,
+    ]
+    runtime = Runtime()
+    runtime.peer.ppm_payload = _ppm_payload(rows)
+
+    frame = DeviceService(runtime).capture()
+
+    with Image.open(io.BytesIO(frame.png)) as image:
+        assert image.size == (width, 2)
+        assert image.tobytes() == bytes(channel for row in rows for pixel in row for channel in pixel)
+
+
+def test_capture_rejects_truncated_ppm_payload():
+    runtime = Runtime()
+    runtime.peer.ppm_payload = _ppm_payload([[(1, 2, 3), (4, 5, 6)]])[:-1]
+
+    with pytest.raises(DeviceError, match="truncated or malformed PPM"):
+        DeviceService(runtime).capture()
+
+
+@pytest.mark.parametrize(
+    "header,error",
+    [
+        (b"P6\n0 2\n255\n", "invalid PPM screenshot header"),
+        (b"P6\n7000 7000\n255\n", "exceeds the supported capture size"),
+    ],
+)
+def test_capture_validates_dimensions_before_reading_pixels(header, error):
+    runtime = Runtime()
+    runtime.peer.ppm_payload = header
+
+    with pytest.raises(DeviceError, match=error):
+        DeviceService(runtime).capture()
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])

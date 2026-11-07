@@ -23,6 +23,40 @@ class DeviceError(RuntimeError):
     pass
 
 
+_MAX_CAPTURE_PIXELS = 40_000_000
+
+
+def _decode_qmp_ppm(path: Path) -> Image.Image:
+    """Decode QMP's P6 screenshot, stripping pixman's per-row alignment bytes."""
+    with path.open("rb") as stream:
+        # QEMU writes exactly these three lines. Bound parsing before reading pixels.
+        header = b"".join(stream.readline(64) for _ in range(3))
+        dimensions = re.fullmatch(rb"P6\n([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})\n255\n", header)
+        if dimensions is None:
+            raise DeviceError("QEMU returned an invalid PPM screenshot header")
+        width, height = (int(token) for token in dimensions.groups())
+        if width * height > _MAX_CAPTURE_PIXELS:
+            raise DeviceError("Guest framebuffer exceeds the supported capture size")
+
+        row_bytes = width * 3
+        aligned_row_bytes = (row_bytes + 3) & ~3
+        packed_size = row_bytes * height
+        aligned_size = aligned_row_bytes * height
+        payload_size = path.stat().st_size - len(header)
+        if payload_size == packed_size:
+            stride = row_bytes
+        elif aligned_row_bytes != row_bytes and payload_size == aligned_size:
+            stride = aligned_row_bytes
+        else:
+            raise DeviceError("QEMU returned a truncated or malformed PPM framebuffer")
+
+        payload = stream.read(payload_size)
+        if len(payload) != payload_size:
+            raise DeviceError("QEMU returned a truncated or malformed PPM framebuffer")
+
+    return Image.frombytes("RGB", (width, height), payload, "raw", "RGB", stride)
+
+
 def device_metadata(device) -> dict:
     try:
         profile = profile_for(device.model, device.os_version)
@@ -178,16 +212,18 @@ class DeviceService:
                 raw = Path(temporary) / "screen.ppm"
                 with self.runtime.qmp() as qmp:
                     qmp.screenshot(raw, image_format="ppm")
-                with Image.open(raw) as image:
-                    if image.width * image.height > 40_000_000:
-                        raise DeviceError("Guest framebuffer exceeds the supported capture size")
-                    image.load()
+                image = _decode_qmp_ppm(raw)
+                try:
                     width, height = image.size
                     rotation = self._rotation()
                     if rotation:
-                        image = image.rotate(-rotation, expand=True)
+                        rotated = image.rotate(-rotation, expand=True)
+                        image.close()
+                        image = rotated
                     encoded = io.BytesIO()
                     image.save(encoded, format="PNG")
+                finally:
+                    image.close()
             self._frame = Frame(encoded.getvalue(), width, height, rotation)
             if output is not None:
                 output = output.expanduser().resolve()
