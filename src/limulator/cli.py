@@ -313,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             if runtime.status()["state"] != "running":
                 runtime.start(wait_timeout=300)
             installed = service.install(ipa)
+            service.unlock()
             result = {"install": installed, "launch": service.launch(installed["bundle_id"])}
         elif args.command == "install":
             result = service.install(args.app)

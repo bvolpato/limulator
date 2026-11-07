@@ -1,6 +1,7 @@
 import subprocess
 import sys
 from types import SimpleNamespace
+from unittest.mock import ANY, Mock, call
 
 import pytest
 
@@ -79,6 +80,41 @@ def test_fresh_disk_creator_refusal_is_a_cli_failure(monkeypatch, tmp_path, caps
     monkeypatch.setattr("limulator.creator.create_device", create)
     assert cli.main(["--data", str(tmp_path), "create", "--fresh-disk"]) == 1
     assert "fresh disk refused: device is already registered" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("state", ["running", "stopped"])
+@pytest.mark.parametrize("unlock_error", [None, "the device has a passcode; pass it as passcode"])
+def test_run_unlocks_after_install_and_stops_before_launch_if_unlock_fails(
+    monkeypatch, tmp_path, capsys, state, unlock_error
+):
+    workflow = Mock()
+    ipa = tmp_path / "Example.ipa"
+    workflow.build.return_value = ipa
+    workflow.status.return_value = {"state": state}
+    workflow.install.return_value = {"bundle_id": "com.example.Example"}
+    workflow.launch.return_value = {"launched": True}
+    if unlock_error:
+        workflow.unlock.side_effect = cli.DeviceError(unlock_error)
+    runtime = SimpleNamespace(status=workflow.status, start=workflow.start)
+    service = SimpleNamespace(install=workflow.install, unlock=workflow.unlock, launch=workflow.launch)
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: runtime)
+    monkeypatch.setattr(cli, "DeviceService", lambda selected_runtime: service)
+    monkeypatch.setattr(cli, "_build_project", workflow.build)
+
+    result = cli.main(["--data", str(tmp_path), "run", str(tmp_path / "Example")])
+
+    expected = [call.build(ANY, ANY), call.status()]
+    if state != "running":
+        expected.append(call.start(wait_timeout=300))
+    expected.extend([call.install(ipa), call.unlock()])
+    if unlock_error:
+        assert result == 1
+        assert unlock_error in capsys.readouterr().err
+    else:
+        expected.append(call.launch("com.example.Example"))
+        assert result == 0
+    assert workflow.mock_calls == expected
 
 
 def test_console_caches_each_named_devices_frame_without_polling_catalog(monkeypatch, tmp_path):

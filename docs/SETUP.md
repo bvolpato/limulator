@@ -74,7 +74,7 @@ uv run limulator --device duo start --wait 600
 uv run limulator --device duo stop
 ```
 
-`start --window` also opens the native emulator window. The browser console works with a headless guest.
+`start --window` also opens the native emulator window. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
 
 In the console, the destination picker lists registered devices and profiles that can be created. Selecting a registered device shows its OS, geometry, support status, and named Start and Stop controls. Stop waits for the owned guest to shut down and rejects duplicate requests while it is in progress. Duo alone exposes fold controls. Selecting a profile without a registered device shows a copyable creation command; creation and firmware downloads run through the terminal. Refresh the picker after registering or creating a device.
 
@@ -96,10 +96,13 @@ uv run limulator --device duo run examples/CounterLab --xtool /path/to/xtool
 
 Limulator runs `xtool dev build --configuration debug --ipa`, inspects the resulting device binary, uploads it, and asks the guest to install and sign it. Host-side Apple distribution credentials are not required for this research guest. Simulator binaries and encrypted App Store executables are rejected. The pinned guest launch API does not accept app launch arguments; Limulator rejects them rather than ignoring them.
 
+`run` starts the guest if needed, then wakes and unlocks it after installation and immediately before launch. An unlock error stops the command before launch. The separate `launch` command does not wake or unlock the guest.
+
 You can also install an existing artifact:
 
 ```sh
 uv run limulator install path/to/Example.ipa
+uv run limulator unlock
 uv run limulator launch com.example.Example
 ```
 
@@ -115,6 +118,8 @@ uv run limulator text 'Hello from Linux'
 uv run limulator fold open
 uv run limulator tree
 ```
+
+Auto-Lock can lock the guest again while it is idle. Use **Unlock** in the console or `uv run limulator --device duo unlock` when the screen is off or locked. If the guest requires a passcode, unlocking reports an error; Limulator does not supply or bypass the passcode.
 
 Tap and swipe coordinates refer to the current upright screenshot's pixels. Capture again after resizing or folding. The web console carries the frame geometry with pointer input and rejects stale coordinates. Accessibility identifiers provide a more stable interface for automated app tests. A screenshot command refuses to overwrite an existing file.
 
