@@ -1334,7 +1334,7 @@ def _pipeline(
             state,
             expected_migration_build,
         )
-        unlock = guest.rpc("screen.unlock", {})
+        unlock = GuestClient(cid=candidate.cid, timeout=120).rpc("screen.unlock", {"timeout": 60})
         info = _verified_guest_info(guest, candidate.os_version)
         if not isinstance(unlock, dict) or unlock.get("locked") is not False:
             raise RuntimeError("guest did not confirm an unlocked screen")
@@ -1409,7 +1409,7 @@ def _pipeline(
         result = runtime.start(wait_timeout=600)
         if result["state"] != "running":
             raise RuntimeError(f"created guest did not reach its owned runtime API: {result}")
-        final_unlock = runtime.guest(timeout=30).rpc("screen.unlock", {})
+        final_unlock = runtime.guest(timeout=120).rpc("screen.unlock", {"timeout": 60})
         if not isinstance(final_unlock, dict) or final_unlock.get("locked") is not False:
             raise RuntimeError("owned runtime did not confirm an unlocked screen")
         runtime.guest(timeout=30).rpc("input.button", {"name": "home"})

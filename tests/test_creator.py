@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -795,7 +796,7 @@ def test_failed_creation_cleanup_blocks_recovery_even_when_disk_has_no_users(
     os.close(released)
 
 
-@pytest.mark.parametrize("failure", ["scope", "private USB"])
+@pytest.mark.parametrize("failure", ["scope", "private USB", None])
 def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(catalog, monkeypatch, failure):
     candidate, _ = _unregistered_booted_vm(catalog)
     vm = candidate.vm_path
@@ -812,13 +813,53 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
         "Popen",
         lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: 0, returncode=0),
     )
-    monkeypatch.setattr(
-        creator, "GuestClient", lambda **kwargs: SimpleNamespace(rpc=lambda *_: {"locked": False})
-    )
+    guest_clients = []
+
+    class Guest:
+        def __init__(self, **kwargs):
+            self.options = kwargs
+            self.calls = []
+            guest_clients.append(self)
+
+        def rpc(self, method, params):
+            self.calls.append((method, params))
+            return {"locked": False}
+
+    monkeypatch.setattr(creator, "GuestClient", Guest)
     monkeypatch.setattr(creator, "_verify_guest_migration", lambda *_: _migration_settings())
     monkeypatch.setattr(creator, "_verified_guest_info", lambda *_: {"ios_version": candidate.os_version})
     monkeypatch.setattr(creator, "_stop_creation_guest", lambda *_: None)
-    monkeypatch.setattr(creator, "Runtime", lambda *_: pytest.fail("runtime must not start before cleanup"))
+    runtime_guest_calls = []
+
+    class Runtime:
+        def __init__(self, *_):
+            pass
+
+        def start(self, *, wait_timeout):
+            assert wait_timeout == 600
+            return {"state": "running"}
+
+        def guest(self, *, timeout):
+            return SimpleNamespace(
+                rpc=lambda method, params: (
+                    runtime_guest_calls.append((timeout, method, params)) or {"locked": False}
+                )
+            )
+
+        def qmp(self):
+            return nullcontext(
+                SimpleNamespace(screenshot=lambda path: creator.Path(path).write_bytes(b"\x89PNG\r\n\x1a\n"))
+            )
+
+        def status(self):
+            return {"state": "running"}
+
+    if failure is None:
+        monkeypatch.setattr(creator, "Runtime", Runtime)
+    else:
+        monkeypatch.setattr(
+            creator, "Runtime", lambda *_: pytest.fail("runtime must not start before cleanup")
+        )
     closed = []
 
     def cleanup_scope(*_args, **_kwargs):
@@ -832,6 +873,20 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
 
     monkeypatch.setattr(creator, "_cleanup_creation_scope", cleanup_scope)
     monkeypatch.setattr(creator._USBHelpers, "close", close_helpers)
+    if failure is None:
+        result = creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+        assert result["state"] == "running"
+        assert Registry(catalog).list() == [candidate]
+        assert creator._read_json(vm / ".limulator-create.json")["state"] == "ready"
+        assert [client.options.get("timeout") for client in guest_clients] == [30, 120]
+        assert guest_clients[0].calls == [("setup.status", {})]
+        assert guest_clients[1].calls == [("screen.unlock", {"timeout": 60})]
+        assert runtime_guest_calls == [
+            (120, "screen.unlock", {"timeout": 60}),
+            (30, "input.button", {"name": "home"}),
+        ]
+        return
+
     message = "owned scope cleanup failed" if failure == "scope" else "private USB helper remains active"
     with pytest.raises(RuntimeError, match=message):
         creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
