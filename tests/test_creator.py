@@ -25,7 +25,12 @@ def catalog(tmp_path, monkeypatch):
     value = {
         "devices": [{"id": profile.model, "name": profile.label} for profile in list_profiles()],
         "pairings": [
-            {"device": profile.model, "osVersion": profile.os_version, "ipsw": profile.main_firmware.filename}
+            {
+                "device": profile.model,
+                "osVersion": profile.os_version,
+                "ipsw": profile.main_firmware.filename,
+                "build": profile.main_firmware.filename.split("_")[-2],
+            }
             for profile in list_profiles()
         ],
     }
@@ -64,6 +69,135 @@ def test_creation_lock_refuses_concurrent_restore_transport(catalog):
         with pytest.raises(RuntimeError, match="shared restore transport"):
             creator.create_device(catalog, "duo", "iPhone19,4", "27.1", 41, 3)
     assert not catalog.vms.exists()
+
+
+class _SettingsGuest:
+    def __init__(self, reply=None, error=None):
+        self.reply = reply
+        self.error = error
+        self.calls = []
+
+    def rpc(self, method, params):
+        self.calls.append((method, params))
+        if self.error is not None:
+            raise self.error
+        return self.reply
+
+
+def _migration_settings(*, build="24A94425", success=True):
+    return {
+        "values": {
+            "DMLastMigrationResults": {
+                "type": "json",
+                "value": {"buildVersion": build, "success": success},
+            }
+        }
+    }
+
+
+def test_expected_migration_build_uses_pinned_firmware_and_rejects_catalog_conflict():
+    profile = get_profile("iphone-duo")
+
+    assert creator._expected_migration_build(profile, {"build": "24A94425"}) == "24A94425"
+    assert creator._expected_migration_build(profile, {"build": "unknown"}) == "24A94425"
+    with pytest.raises(RuntimeError, match="contradicts pinned profile firmware build"):
+        creator._expected_migration_build(profile, {"build": "24A446"})
+
+
+def test_expected_migration_build_refuses_profile_without_build_in_firmware_filename():
+    profile = SimpleNamespace(id="fixture", main_firmware=SimpleNamespace(filename="unversioned.ipsw"))
+
+    with pytest.raises(RuntimeError, match="does not identify a build version"):
+        creator._expected_migration_build(profile, {"build": "unknown"})
+
+
+def test_creation_rejects_failed_migration_even_when_setup_build_marker_matches(tmp_path):
+    expected = {"data_migration_done": True, "pending": False}
+    result = {"buildVersion": "24A94425", "success": False}
+    state_path = tmp_path / ".limulator-create.json"
+    state = {"stage": "verification"}
+
+    with pytest.raises(RuntimeError, match="success=false"):
+        creator._verify_guest_migration(
+            _SettingsGuest(_migration_settings(success=False)),
+            expected,
+            state_path,
+            state,
+            "24A94425",
+        )
+
+    receipt = creator._read_json(state_path)
+    assert receipt["migration_result"] == result
+    assert receipt["setup"] == expected
+    assert receipt["migration_expected_build"] == "24A94425"
+
+
+def test_creation_accepts_successful_migration_for_expected_build(tmp_path):
+    guest = _SettingsGuest(_migration_settings())
+    result = creator._verify_guest_migration(
+        guest,
+        {"data_migration_done": True, "pending": False},
+        tmp_path / ".limulator-create.json",
+        {},
+        "24A94425",
+    )
+
+    assert result == {"buildVersion": "24A94425", "success": True}
+    assert guest.calls == [("settings.get", {"domain": "com.apple.migration"})]
+
+
+def test_creation_rejects_migration_result_for_wrong_build(tmp_path):
+    state_path = tmp_path / ".limulator-create.json"
+    with pytest.raises(RuntimeError, match="expected '24A94425'"):
+        creator._verify_guest_migration(
+            _SettingsGuest(_migration_settings(build="24A446")),
+            {"data_migration_done": True, "pending": False},
+            state_path,
+            {},
+            "24A94425",
+        )
+    assert creator._read_json(state_path)["migration_result"]["buildVersion"] == "24A446"
+
+
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        (None, "unsupported migration response"),
+        ({"values": {}}, "missing DMLastMigrationResults"),
+        ({"values": {"DMLastMigrationResults": {}}}, "unsupported DMLastMigrationResults value"),
+    ],
+)
+def test_creation_refuses_missing_or_malformed_migration_results(tmp_path, reply, message):
+    state_path = tmp_path / ".limulator-create.json"
+    with pytest.raises(RuntimeError, match=message):
+        creator._verify_guest_migration(
+            _SettingsGuest(reply),
+            {"data_migration_done": True, "pending": False},
+            state_path,
+            {},
+            "24A94425",
+        )
+    receipt = creator._read_json(state_path)
+    assert receipt["migration_result"] is None
+    assert message in receipt["migration_result_read_error"]
+
+
+def test_creation_reports_unsupported_migration_read_separately(tmp_path):
+    guest = _SettingsGuest(error=creator.ProtocolError("settings.get is unsupported"))
+    state_path = tmp_path / ".limulator-create.json"
+
+    with pytest.raises(RuntimeError, match="could not be read with settings.get"):
+        creator._verify_guest_migration(
+            guest,
+            {"data_migration_done": True, "pending": False},
+            state_path,
+            {},
+            "24A94425",
+        )
+
+    receipt = creator._read_json(state_path)
+    assert receipt["migration_result"] is None
+    assert "settings.get is unsupported" in receipt["migration_result_read_error"]
 
 
 def _registered_device(paths, name, profile_id, cid):

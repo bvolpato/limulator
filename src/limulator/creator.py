@@ -38,7 +38,7 @@ from .lifecycle import (
     _validate_name,
 )
 from .profiles import DeviceProfile, FirmwareDescriptor, profile_for
-from .protocols import GuestClient
+from .protocols import GuestClient, ProtocolError
 
 _STAGES = ("sanity", "bundle", "firmware", "gpu-driver", "prepare", "patch", "restore", "cfw", "booted")
 _HOST_CREATION_LOCK = Path("/run/lock/limulator-create.lock")
@@ -827,6 +827,90 @@ def _verified_guest_info(guest: GuestClient, expected_ios: str) -> dict:
     return info
 
 
+def _expected_migration_build(profile: DeviceProfile, pairing: dict) -> str:
+    pairing_build = pairing.get("build")
+    if not isinstance(pairing_build, str) or not pairing_build or pairing_build == "unknown":
+        pairing_build = None
+
+    filename = profile.main_firmware.filename
+    match = re.search(r"_([^_]+)_Restore\.ipsw$", filename) if isinstance(filename, str) else None
+    firmware_build = match.group(1) if match and match.group(1) != "unknown" else None
+    if firmware_build is None:
+        raise RuntimeError(f"profile {profile.id} firmware filename does not identify a build version")
+
+    if pairing_build is not None and pairing_build != firmware_build:
+        raise RuntimeError(
+            f"compatibility catalog build {pairing_build!r} contradicts pinned profile firmware build "
+            f"{firmware_build!r} for {profile.id}"
+        )
+    return firmware_build
+
+
+def _migration_result_from_settings(reply: object) -> dict:
+    if not isinstance(reply, dict) or not isinstance(reply.get("values"), dict):
+        raise RuntimeError("guest settings.get returned an unsupported migration response")
+    entry = reply["values"].get("DMLastMigrationResults")
+    if entry is None:
+        raise RuntimeError("guest settings.get is missing DMLastMigrationResults")
+    if not isinstance(entry, dict) or not isinstance(entry.get("value"), dict):
+        raise RuntimeError("guest settings.get returned an unsupported DMLastMigrationResults value")
+    return entry["value"]
+
+
+def _verify_migration_result(result: dict, expected_build: str) -> None:
+    success = result.get("success")
+    if success is False:
+        raise RuntimeError("guest DataMigrator reported migration success=false")
+    if success is not True:
+        raise RuntimeError("guest DMLastMigrationResults is missing a boolean success value")
+
+    actual_build = result.get("buildVersion")
+    if not isinstance(actual_build, str) or not actual_build:
+        raise RuntimeError("guest DMLastMigrationResults is missing a valid buildVersion")
+    if actual_build != expected_build:
+        raise RuntimeError(
+            f"guest DataMigrator recorded build {actual_build!r}; expected {expected_build!r}"
+        )
+
+
+def _verify_guest_migration(
+    guest: GuestClient,
+    setup: object,
+    state_path: Path,
+    state: dict,
+    expected_build: str,
+) -> dict:
+    state.update(setup=setup, migration_expected_build=expected_build)
+    state.pop("migration_result_read_error", None)
+    state["migration_result"] = None
+    _atomic_json(state_path, state)
+
+    if not isinstance(setup, dict) or setup.get("data_migration_done") is not True:
+        raise RuntimeError("guest first-boot data migration is not complete")
+    if setup.get("pending") is not False:
+        raise RuntimeError("guest setup assistant is still pending")
+
+    try:
+        reply = guest.rpc("settings.get", {"domain": "com.apple.migration"})
+    except ProtocolError as exc:
+        message = f"guest migration results could not be read with settings.get: {exc}"
+        state["migration_result_read_error"] = message
+        _atomic_json(state_path, state)
+        raise RuntimeError(message) from exc
+
+    try:
+        result = _migration_result_from_settings(reply)
+    except RuntimeError as exc:
+        state["migration_result_read_error"] = str(exc)
+        _atomic_json(state_path, state)
+        raise
+
+    state["migration_result"] = result
+    _atomic_json(state_path, state)
+    _verify_migration_result(result, expected_build)
+    return result
+
+
 def create_device(
     paths: Paths,
     name: str,
@@ -917,6 +1001,7 @@ def _pipeline(
         _fresh_disk_allowed(paths, candidate, old)
     if vm.exists() and any(vm.iterdir()) and (not old or old.get("specification") != specification):
         raise RuntimeError(f"existing VM data has no matching creation receipt; preserving {vm}")
+    expected_migration_build = _expected_migration_build(profile, pairing)
     _private_directory(vm)
     state = dict(old) if old else {"specification": specification, "completed": []}
     state.pop("error", None)
@@ -925,6 +1010,7 @@ def _pipeline(
         state="creating",
         process=_identity(os.getpid()),
         profile_id=profile.id,
+        migration_expected_build=expected_migration_build,
         upstream_linux_tested=profile.upstream_linux_tested,
     )
     _atomic_json(state_path, state)
@@ -1081,15 +1167,25 @@ def _pipeline(
             raise RuntimeError("upstream returned without a completed first boot")
         guest = GuestClient(cid=candidate.cid, timeout=30)
         setup = guest.rpc("setup.status", {})
+        migration_result = _verify_guest_migration(
+            guest,
+            setup,
+            state_path,
+            state,
+            expected_migration_build,
+        )
         unlock = guest.rpc("screen.unlock", {})
-        if not isinstance(setup, dict) or setup.get("data_migration_done") is not True:
-            raise RuntimeError("guest first-boot data migration is not complete")
-        if setup.get("pending") is not False:
-            raise RuntimeError("guest setup assistant is still pending")
         info = _verified_guest_info(guest, candidate.os_version)
         if not isinstance(unlock, dict) or unlock.get("locked") is not False:
             raise RuntimeError("guest did not confirm an unlocked screen")
-        state.update(completed=_completed(vm), setup=setup, guest_info=info, unlock=unlock, stage="shutdown")
+        state.update(
+            completed=_completed(vm),
+            setup=setup,
+            migration_result=migration_result,
+            guest_info=info,
+            unlock=unlock,
+            stage="shutdown",
+        )
         _atomic_json(state_path, state)
         _stop_creation_guest(vm, candidate.cid, unit)
         _apply_profile_configuration(vm, profile, int(candidate.scale))
