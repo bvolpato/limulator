@@ -304,7 +304,7 @@ class DeviceService:
 
     def unlock(self) -> dict:
         with self._interaction():
-            return self.runtime.guest(timeout=120).rpc("screen.unlock")
+            return self.runtime.guest(timeout=120).rpc("screen.unlock", {"timeout": 60})
 
     def apps(self) -> list[dict]:
         self._check_available()

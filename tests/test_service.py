@@ -226,6 +226,20 @@ def test_screen_queries_native_point_bounds_with_the_requested_timeout():
     assert runtime.client.calls == [("device.screen", None)]
 
 
+def test_unlock_allows_sixty_seconds_in_the_guest_with_a_longer_host_deadline():
+    runtime = Runtime()
+    timeouts = []
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+    DeviceService(runtime).unlock()
+    assert timeouts == [120]
+    assert runtime.client.calls == [("screen.unlock", {"timeout": 60})]
+
+
 def test_phone_cannot_send_fold_commands_to_guest():
     runtime = Runtime()
     runtime.device.model = "iPhone17,3"

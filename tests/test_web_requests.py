@@ -219,10 +219,13 @@ const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
     assert(calls.some(({ path }) => path === '/api/status'));
   }
   for (const path of ['/api/status', '/api/apps']) {
-    const { api, reads, commands } = setup([path]);
+    const { api, reads, commands, timers } = setup([path]);
     api.select('duo');
     const read = path === '/api/status' ? api.pollStatus() : api.loadApps();
     await flush();
+    if (path === '/api/apps') {
+      assert([...timers.values()].some(({ delay }) => delay === 75000), 'apps must allow the 60s host RPC');
+    }
     const command = api.mutate('/api/launch');
     await flush();
     assert.equal(commands.length, 0, `launch must drain ${path} as well as screen capture`);

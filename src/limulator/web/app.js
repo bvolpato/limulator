@@ -4,6 +4,7 @@
   const POLL_STATUS_MS = 2000;
   const POLL_SCREEN_MS = 1000;
   const STATUS_TIMEOUT_MS = 10000;
+  const APPS_TIMEOUT_MS = 75000;
   const SCREEN_TIMEOUT_MS = 12000;
   const ACTION_TIMEOUT_MS = 30000;
   const FOLD_TIMEOUT_MS = 90000;
@@ -741,7 +742,7 @@
     updateAppsView();
     updateControls();
     try {
-      const response = await fetchWithTimeout(deviceUrl("/api/apps", name), {}, STATUS_TIMEOUT_MS, requestRef);
+      const response = await fetchWithTimeout(deviceUrl("/api/apps", name), {}, APPS_TIMEOUT_MS, requestRef);
       const body = await responseBody(response, requestRef);
       if (!selectionIsCurrent(name, epoch)) return;
       if (!response.ok) throw new Error(readErrorMessage(body, response));
