@@ -136,6 +136,6 @@ Stop the guest when finished:
 uv run limulator --device "$limulator_device" stop
 ```
 
-For a repository update, stop the guest first, pull without discarding local work, and run `uv sync --locked`. Run `bootstrap sources` when backend patches change; rebuild only the affected backend component. Re-running `bootstrap all`, deleting build caches, or restoring the VM for each app change adds unnecessary work.
+For a repository update, stop the guest first, pull without discarding local work, and run `uv sync --locked`. When dependency revisions change, follow [the source migration instructions](UPSTREAM.md#updating-an-existing-installation) and rebuild only the affected backend component. Re-running `bootstrap all`, deleting build caches, or restoring the VM for each app change adds unnecessary work.
 
 Clean guest creation, Duo/iPad behavior, and complete native scenario acceptance remain subject to the limits in the [README](../README.md). A reusable diagnostic guest is useful for development but does not establish distribution readiness.

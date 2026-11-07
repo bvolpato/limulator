@@ -29,6 +29,24 @@ jobs:
           node-version: 22
       - name: Install locked development environment
         run: uv sync --locked --python 3.12 ${{ matrix.python == 'managed' && '--managed-python' || '--no-managed-python' }}
+      - name: Fetch pinned sources for backend contract checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          fetch_source() {
+            local path=$1 key=$2 repository revision
+            repository=$(jq -er "$key.repository" third_party.lock.json)
+            revision=$(jq -er "$key.revision" third_party.lock.json)
+            git init --quiet "$path"
+            git -C "$path" fetch --quiet --depth=1 -- "$repository" "$revision"
+            git -C "$path" checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$path" rev-parse HEAD)" = "$revision"
+          }
+          backend="$RUNNER_TEMP/limulator-backend"
+          fetch_source "$backend" .backend
+          version=$(jq -er .vphone_cli.version third_party.lock.json)
+          fetch_source "$backend/cpu-tree/vphone-cli-$version" .vphone_cli
+          echo "LIMULATOR_BACKEND=$backend" >> "$GITHUB_ENV"
       - name: Check Python and browser code
         run: |
           uv run ruff check .

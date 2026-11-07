@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "backend": {
-    "repository": "https://github.com/YahiaAngelo/vphone-linux.git",
-    "revision": "c2dc1996c8398ddb994288a29a719360f354d268"
+    "repository": "https://github.com/bvolpato/vphone-linux.git",
+    "revision": "4e9add57395610b2a076df07b2fd73ad2c521fbf"
   },
   "submodules": {
-    "qemu": {"repository": "https://github.com/YahiaAngelo/qemu-vphone.git", "revision": "14c9913d2231080bd234c69421ed4f293a25f767"},
+    "qemu": {"repository": "https://github.com/bvolpato/qemu-vphone.git", "revision": "fa07541ef65ea1a2963483ded299557152c754cb"},
     "reims-vgpu": {"repository": "https://github.com/YahiaAngelo/reims-vgpu.git", "revision": "960bf4b128a2678f032e46eb32964caa4828b818"},
     "metal2vulkan": {"repository": "https://github.com/YahiaAngelo/metal2vulkan.git", "revision": "542e2141384e374dfc08cee0e29a9f97d96d6c64"}
   },
@@ -17,7 +17,7 @@
     "libimobiledevice": {"repository": "https://github.com/libimobiledevice/libimobiledevice.git", "revision": "149f7623c672c1fa73122c7119a12bfc0012f2ac", "version": "1.4.0"},
     "libirecovery": {"repository": "https://github.com/libimobiledevice/libirecovery.git", "revision": "b59ef4814525f487287da1609864f432cd79e3ed", "version": "1.3.1"}
   },
-  "vphone_cli": {"repository": "https://github.com/Lakr233/vphone-cli.git", "revision": "83197152137ddd2aad70eb121d6b88a9afbee36e", "version": "2.14.2"},
+  "vphone_cli": {"repository": "https://github.com/bvolpato/vphone-cli.git", "revision": "ef4ed41e00e80910f6359bbde544f74e96c5c0d9", "version": "2.14.2"},
   "meson": {
     "version": "1.5.2",
     "url": "https://files.pythonhosted.org/packages/55/a6/47b9353c331318a13eb050887eacfd61eb075746285f9baf7ef7de6ae235/meson-1.5.2-py3-none-any.whl",
@@ -60,120 +60,6 @@
     "url": "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz",
     "sha256": "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002"
   },
-  "patches": [
-    {
-      "path": "patches/0001-scope-dfu-exporter-cleanup.patch",
-      "sha256": "d08889bc164eaa7e9b1bd24c686ada8e472114be582a5158c4f25d4a44998b30",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0002-preserve-and-bound-creation.patch",
-      "sha256": "67530e536036822464191491eec0885333cd93b8228346ebae67b1ea18a2634a",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0003-isolate-gpu-driver-recovery.patch",
-      "sha256": "b3888d9cd54140521d85800894a67f2c50ea14a08cfce6f11b27388f24654def",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0004-fix-usbip-unlink-framing.patch",
-      "sha256": "948b8d0c6f4098148837ac14cfe4505c2bd8a006d7d5276459377f7ad6663448",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0005-clear-failed-recovery-client.patch",
-      "sha256": "c05ccc6f9151acab361b1047ceb7eae81126b6d78a8c647651eb629658bd520e",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0006-qemu-release-acquire-ordering.patch",
-      "sha256": "a7983d5f3c88499e2532d54a3907f6d29367131c5939657d738ce54d3bfe8958",
-      "target": "qemu",
-      "upstream_commit": "https://github.com/YahiaAngelo/qemu-vphone/commit/38c32a9bf16d92c0fd1d82b20c051cbe34a90372"
-    },
-    {
-      "path": "patches/0007-local-gdb-endpoint.patch",
-      "sha256": "0ee566a19024e5e6d538b1dee3b1dd1f454086911447f1a53aa3f0a506346277",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0008-qemu-jump-cache-invalidation-epochs.patch",
-      "sha256": "b570c814409aea593aaac9cf56956d92ff3044ac5b1f86b4934114d155146ae8",
-      "target": "qemu",
-      "upstream_commit": "https://github.com/YahiaAngelo/qemu-vphone/commit/f6b3bc9d8ec9ba3113a4dbae9e9584775cd0d1f2"
-    },
-    {
-      "path": "patches/0009-iphone-16-native-display.patch",
-      "sha256": "094bb2a02a11e92be5dd1817bdb2b930c2427d2f148d2e124deaeac414d6c98a",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0010-fix-usbip-idle-in-timeouts.patch",
-      "sha256": "f7f7d0b812226077de3826800a59ff5424df3b2410e74419238f1693370ae846",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0011-bound-dyld-cache-mappings.patch",
-      "sha256": "cd60a4da3f332fa01d42ffcf81acfbe3534ad8369062fe0b0aad85e42f778bb7",
-      "target": "vphone_cli"
-    },
-    {
-      "path": "patches/0012-first-boot-qmp.patch",
-      "sha256": "399bcf5e71d6de782e814fe0bd665524df19ea46f0fab6bdec3f947e8eeb1e63",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0013-update-linux-guest-without-restore-tree.patch",
-      "sha256": "9ad1ad3781fd31c87bd01d391fd019412276b5f03d5275923af517a00a1e74e3",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0014-qemu-exact-generic-timer.patch",
-      "sha256": "ed5a9afdbe22bf27a6cb87c06632b110c4188e49aa795f0faacc1da8ab3da81c",
-      "target": "qemu"
-    },
-    {
-      "path": "patches/0015-linux-stage-dyld-cache.patch",
-      "sha256": "92b65576be2acbfe80dc585be7f80a426fd155d694fb699362016903b73a226c",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0016-linux-release-cli-selection.patch",
-      "sha256": "2deebc13d02cab651b429c2186bbafa3934758ca716dce0e05e137dfa0da50b0",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0017-linux-require-guest-receipt.patch",
-      "sha256": "66adc17e6552f88e987cc747dd7faec6d4595578d8f7e556f40355569cd148af",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0018-first-boot-migration-result.patch",
-      "sha256": "1f108639f0934c6a4321ad5d1155594b5cb9a0316aca6bcf99e2cc1b6eeab237",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0019-opt-in-usb-restore-trace.patch",
-      "sha256": "21228b83ae9ef5c2ec809ecb6576b4a51d229c5548166d0bc56816a278e0ed3d",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0020-qemu-usb-control-delivery-trace.patch",
-      "sha256": "3a43e599036d44d519ab17205e4f43f1eba21643848a8106c93719f369a7a2cb",
-      "target": "qemu"
-    },
-    {
-      "path": "patches/0022-native-toolbar-private-socket.patch",
-      "sha256": "bbb5917f2c3bb9a74d37ab7ab5845bdf515dc23a06edebafd156ee149b99759d",
-      "target": "backend"
-    },
-    {
-      "path": "patches/0023-vphone-window-button-mapping.patch",
-      "sha256": "b78e1814f0cec3133930a62714ab09b31823a703bef5b00aaabbb229609a0645",
-      "target": "backend"
-    }
-  ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},
   "release": {
     "version": "2.14.2",

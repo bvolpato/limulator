@@ -27,7 +27,7 @@ if [[ $phase != deps ]]; then
   command -v jq >/dev/null || { echo 'Install jq before bootstrapping' >&2; exit 1; }
 fi
 mkdir -p "$LIMULATOR_HOME" "$LIMULATOR_CACHE/downloads" "$LIMULATOR_CACHE/sources"
-fetch_checkout() {
+fetch_apfs_checkout() {
   local src=$1 repository=$2 revision=$3
   if [[ ! -e $src ]]; then git clone "$repository" "$src"; fi
   [[ -d $src/.git || -f $src/.git ]] || { echo "Not a Git checkout: $src" >&2; return 1; }
@@ -70,19 +70,11 @@ build_deps() {
     libusb-1.0-0-dev libssl-dev libcurl4-openssl-dev libarchive-dev "linux-headers-$(uname -r)"
 }
 build_sources() {
-  mkdir -p "$(dirname "$LIMULATOR_BACKEND")"
-  fetch_checkout "$LIMULATOR_BACKEND" "$(jq -er .backend.repository "$lock")" "$(jq -er .backend.revision "$lock")"
-  git -C "$LIMULATOR_BACKEND" submodule update --init
-  git -C "$LIMULATOR_BACKEND/qemu" submodule update --init util/mlib
-  local name
-  for name in qemu reims-vgpu metal2vulkan; do
-    [[ $(git -C "$LIMULATOR_BACKEND/$name" rev-parse HEAD) == "$(jq -er --arg name "$name" '.submodules[$name].revision' "$lock")" ]] || return 1
-  done
-  local cli_src=$LIMULATOR_BACKEND/cpu-tree/vphone-cli-$(jq -er .vphone_cli.version "$lock")
-  mkdir -p "$(dirname "$cli_src")"
-  fetch_checkout "$cli_src" "$(jq -er .vphone_cli.repository "$lock")" "$(jq -er .vphone_cli.revision "$lock")"
-  command -v uv >/dev/null || { echo 'uv is required to validate backend patches' >&2; return 1; }
-  uv run --script "$here/apply_backend_patches.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
+  command -v uv >/dev/null || { echo 'uv is required to prepare pinned backend sources' >&2; return 1; }
+  uv run --script "$here/sync_backend_sources.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
+}
+verify_sources() {
+  uv run --script "$here/sync_backend_sources.py" --lock "$lock" --backend "$LIMULATOR_BACKEND" --check
 }
 build_apple_usb() { "$here/build_apple_usb.sh"; }
 build_tools() {
@@ -142,8 +134,9 @@ build_signing() {
   tar -xzf "$archive" --strip-components=1 -C "$LIMULATOR_PREFIX/share/doc/rcodesign" "$folder/COPYING"
   "$LIMULATOR_PREFIX/bin/rcodesign" --version
 }
-build_gpu() { contained make -C "$LIMULATOR_BACKEND/reims-vgpu"; }
+build_gpu() { verify_sources; contained make -C "$LIMULATOR_BACKEND/reims-vgpu"; }
 build_qemu() {
+  verify_sources
   build_crypto
   local pkgcfg=$LIMULATOR_BACKEND/reims-vgpu/target/dist-vulkan/lib/pkgconfig
   export PKG_CONFIG_PATH=$pkgcfg:$PKG_CONFIG_PATH
@@ -159,19 +152,19 @@ build_qemu() {
 build_cli() {
   local src
   src=$LIMULATOR_BACKEND/cpu-tree/vphone-cli-$(jq -er .vphone_cli.version "$lock")
-  mkdir -p "$(dirname "$src")"
-  fetch_checkout "$src" "$(jq -er .vphone_cli.repository "$lock")" "$(jq -er .vphone_cli.revision "$lock")"
-  uv run --script "$here/apply_backend_patches.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
+  build_sources
   contained env VPHONE_CLI="$src" "$LIMULATOR_BACKEND/linux-create/build.sh" \
     --configuration release --jobs "$LIMULATOR_JOBS" -Xcc "-I$LIMULATOR_PREFIX/include" \
     -Xlinker "-L$LIMULATOR_PREFIX/lib" -Xlinker -rpath -Xlinker "$LIMULATOR_PREFIX/lib"
 }
-build_usbmuxd() { "$LIMULATOR_BACKEND/tools/build-usbmuxd-32k.sh"; }
+build_usbmuxd() { verify_sources; "$LIMULATOR_BACKEND/tools/build-usbmuxd-32k.sh"; }
 build_apfs() {
+  verify_sources
   local src=$LIMULATOR_BACKEND/.build/linux-apfs-rw revision
   revision=$(jq -er .apfs.revision "$lock")
   mkdir -p "$(dirname "$src")"
-  fetch_checkout "$src" "$(jq -er .apfs.repository "$lock")" "$revision"
+  # Keep the upstream backend's APFS compatibility patch until that dependency has a fork pin.
+  fetch_apfs_checkout "$src" "$(jq -er .apfs.repository "$lock")" "$revision"
   if git -C "$src" apply --check "$LIMULATOR_BACKEND/patches/linux-apfs-rw-ios27.patch" 2>/dev/null; then
     git -C "$src" apply "$LIMULATOR_BACKEND/patches/linux-apfs-rw-ios27.patch"
   else
@@ -185,6 +178,7 @@ build_apfs() {
   modinfo -F vermagic "$src/apfs.ko"
 }
 build_release() {
+  verify_sources
   local version
   version=$(jq -er .release.version "$lock")
   mkdir -p "$VSETUP_RELEASE"

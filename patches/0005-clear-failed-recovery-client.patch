@@ -1,8 +1,0 @@
-diff --git a/linux-create/edits/MobileRecoveryCore.txt b/linux-create/edits/MobileRecoveryCore.txt
-new file mode 100644
---- /dev/null
-+++ b/linux-create/edits/MobileRecoveryCore.txt
-@@ -0,0 +1,3 @@
-+# Keep a failed open from leaving a freed client for the retry loop to close again.
-+libirecovery.c	/^irecv_error_t irecv_open_with_ecid\(/,/^irecv_error_t irecv_usb_set_configuration\(/ s/^(\tirecv_client_t client = \*pclient;)$/\1\n\t*pclient = NULL;/
-+libirecovery.c	/^irecv_error_t irecv_open_with_ecid\(/,/^irecv_error_t irecv_usb_set_configuration\(/ s/^(\t\tif \(\(\*pclient\)->connected_callback != NULL\) \{)$/\t\t*pclient = client;\n\1/

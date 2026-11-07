@@ -82,6 +82,12 @@ def _native_env(paths: Paths) -> dict[str, str]:
         KEEP="1",
         VSETUP_ASSUME_YES="1",
     )
+    for suffix in ("FIRST_BOOT_TIMEOUT", "SHUTDOWN_TIMEOUT", "MIGRATION_TIMEOUT"):
+        legacy, generic = f"LIMULATOR_{suffix}", f"VPHONE_{suffix}"
+        if legacy in env:
+            env[generic] = env[legacy]
+        elif generic in env:
+            env[legacy] = env[generic]
     return env
 
 
@@ -744,7 +750,7 @@ class _USBHelpers:
                 raise RuntimeError(f"private usbmuxd did not start; see {self.directory / 'usbmuxd.log'}")
             time.sleep(0.1)
         self._trace("host.private_usbmuxd_ready", socket_ready=True)
-        self.env["LIMULATOR_CREATOR_USB_READY"] = "1"
+        self.env["LIMULATOR_CREATOR_USB_READY"] = self.env["VPHONE_CREATOR_USB_READY"] = "1"
 
     def _owned_import(self, port: int) -> bool:
         expected = self.import_connections.get(port)
@@ -1289,14 +1295,19 @@ def _pipeline(
     run_dir = Path(tempfile.mkdtemp(prefix="create-", dir=vm))
     state["run_dir"] = str(run_dir)
     env.update(VSOCK="vhost", VSOCK_DIR=str(run_dir / "vsock"), REIMS_VGPU_CENSUS_DIR=str(run_dir / "census"))
-    if env.get("LIMULATOR_USB_TRACE") == "1":
+    trace_enabled = env.get("LIMULATOR_USB_TRACE") == "1"
+    env["LIMULATOR_USB_TRACE"] = env["VPHONE_USB_TRACE"] = "1" if trace_enabled else "0"
+    if trace_enabled:
         trace_path = run_dir / "usb-transport-trace.jsonl"
-        env["LIMULATOR_USB_TRACE_FILE"] = str(trace_path)
+        env["LIMULATOR_USB_TRACE_FILE"] = env["VPHONE_USB_TRACE_FILE"] = str(trace_path)
         trace_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
         with contextlib.suppress(OSError):
             trace_fd = os.open(trace_path, trace_flags, 0o600)
             os.close(trace_fd)
         print(f"USB transport trace: {trace_path}", file=sys.stderr, flush=True)
+    else:
+        env.pop("LIMULATOR_USB_TRACE_FILE", None)
+        env.pop("VPHONE_USB_TRACE_FILE", None)
     for directory in (run_dir / "vsock", run_dir / "census"):
         _private_directory(directory)
     helpers = _USBHelpers(paths, run_dir, env, unit)
@@ -1307,7 +1318,7 @@ def _pipeline(
     scope_owned = False
     try:
         qmp_path = _first_boot_qmp_path(run_dir)
-        env["LIMULATOR_FIRST_BOOT_QMP"] = str(qmp_path)
+        env["LIMULATOR_FIRST_BOOT_QMP"] = env["VPHONE_FIRST_BOOT_QMP"] = str(qmp_path)
         state.update(run_dir=str(run_dir), first_boot_qmp=str(qmp_path))
         _atomic_json(state_path, state)
         catalog = Path.home() / ".cache/vphone"
@@ -1323,13 +1334,16 @@ def _pipeline(
             CID=str(candidate.cid),
         )
         script = paths.backend / "setup/create-vm.sh"
-        if "LIMULATOR_CREATOR_USB_READY" not in script.read_text():
+        script_source = script.read_text()
+        if not any(
+            hook in script_source for hook in ("VPHONE_CREATOR_USB_READY", "LIMULATOR_CREATOR_USB_READY")
+        ):
             raise RuntimeError(
-                "backend lacks the scoped USB creation patch; bootstrap it before creating a guest"
+                "backend sources lack scoped USB creation support; bootstrap them before creating a guest"
             )
-        if "LIMULATOR_FIRST_BOOT_QMP" not in script.read_text():
+        if not any(hook in script_source for hook in ("VPHONE_FIRST_BOOT_QMP", "LIMULATOR_FIRST_BOOT_QMP")):
             raise RuntimeError(
-                "backend lacks the private first-boot QMP hook; bootstrap it before creating a guest"
+                "backend sources lack the private first-boot QMP hook; bootstrap them before creating a guest"
             )
         baseline = _unit_states()
         state.update(usb_baseline=baseline, scope=unit, run_dir=str(run_dir))

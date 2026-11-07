@@ -3,6 +3,7 @@
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import zipfile
@@ -31,12 +32,16 @@ def firmware_identity():
 def backend(tmp_path):
     source = tmp_path / "backend"
     shutil.copytree(ROOT / "tests/fixtures/migration-first-boot", source)
-    subprocess.run(
-        ["git", "apply", str(ROOT / "patches/0018-first-boot-migration-result.patch")],
-        cwd=source,
-        check=True,
-        capture_output=True,
-    )
+    if selected := os.environ.get("LIMULATOR_BACKEND"):
+        selected = Path(selected)
+        function = re.search(
+            r"^do_first_boot\(\) \{.*?^\}",
+            (selected / "setup/create-vm.sh").read_text(),
+            re.MULTILINE | re.DOTALL,
+        )
+        assert function is not None
+        (source / "setup/create-vm.sh").write_text(function.group() + "\nstep booted do_first_boot\n")
+        shutil.copyfile(selected / "tools/migration-result.py", source / "tools/migration-result.py")
     (source / "tools/auto-lock-never.py").write_text(
         "import os\nwith open(os.environ['CALLS'], 'a') as stream: stream.write('auto-lock\\n')\n"
     )
@@ -52,7 +57,9 @@ def backend(tmp_path):
 def result(*, success=True, build=BUILD):
     return {
         "id": 1,
-        "result": {"values": {"DMLastMigrationResults": {"value": {"success": success, "buildVersion": build}}}},
+        "result": {
+            "values": {"DMLastMigrationResults": {"value": {"success": success, "buildVersion": build}}}
+        },
     }
 
 

@@ -387,16 +387,29 @@ def _unregistered_booted_vm(paths):
     return candidate, receipt
 
 
-def test_verification_resume_preserves_state_and_only_reselects_first_boot(catalog, monkeypatch):
+@pytest.mark.parametrize("hook_prefix", ["LIMULATOR", "VPHONE"])
+@pytest.mark.parametrize("trace", [None, "0", "1"])
+def test_verification_resume_preserves_state_and_only_reselects_first_boot(
+    catalog, monkeypatch, hook_prefix, trace
+):
     candidate, _ = _unregistered_booted_vm(catalog)
     vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
     original, inode = disk.read_bytes(), disk.stat().st_ino
     markers = (vm / ".create-state").read_bytes()
     script = catalog.backend / "setup/create-vm.sh"
-    script.write_text("# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n")
+    script.write_text(f"# {hook_prefix}_CREATOR_USB_READY {hook_prefix}_FIRST_BOOT_QMP\n")
     monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
     monkeypatch.setattr(creator, "_unit_states", lambda: {})
-    environment = {"LIMULATOR_FIRST_BOOT_QMP": "/tmp/previous-shared-qmp.sock"}
+    inherited_trace = catalog.data / "inherited-generic-trace.jsonl"
+    environment = {
+        "LIMULATOR_FIRST_BOOT_QMP": "/tmp/previous-shared-qmp.sock",
+        "VPHONE_FIRST_BOOT_QMP": "/tmp/inherited-generic-qmp.sock",
+        "VPHONE_USB_TRACE": "0" if trace == "1" else "1",
+        "VPHONE_USB_TRACE_FILE": str(inherited_trace),
+        "LIMULATOR_USB_TRACE_FILE": str(catalog.data / "inherited-legacy-trace.jsonl"),
+    }
+    if trace is not None:
+        environment["LIMULATOR_USB_TRACE"] = trace
 
     def unavailable(_self):
         raise RuntimeError("pause before native launch")
@@ -420,6 +433,22 @@ def test_verification_resume_preserves_state_and_only_reselects_first_boot(catal
     qmp_path = creator.Path(receipt["first_boot_qmp"])
     assert qmp_path == creator.Path(receipt["run_dir"]) / "qmp.sock"
     assert environment["LIMULATOR_FIRST_BOOT_QMP"] == str(qmp_path)
+    assert environment["VPHONE_FIRST_BOOT_QMP"] == str(qmp_path)
+    trace_path = qmp_path.parent / "usb-transport-trace.jsonl"
+    assert environment["VPHONE_USB_TRACE"] == environment["LIMULATOR_USB_TRACE"] == (
+        "1" if trace == "1" else "0"
+    )
+    if trace == "1":
+        assert environment["VPHONE_USB_TRACE_FILE"] == environment["LIMULATOR_USB_TRACE_FILE"] == str(
+            trace_path
+        )
+        assert stat.S_IMODE(trace_path.stat().st_mode) == 0o600
+    else:
+        assert "VPHONE_USB_TRACE_FILE" not in environment
+        assert "LIMULATOR_USB_TRACE_FILE" not in environment
+        assert not trace_path.exists()
+    assert not inherited_trace.exists()
+    assert not (catalog.data / "inherited-legacy-trace.jsonl").exists()
     assert stat.S_IMODE(qmp_path.parent.stat().st_mode) == 0o700
     assert qmp_path.parent.stat().st_uid == os.getuid()
     assert disk.read_bytes() == original
@@ -461,25 +490,14 @@ def test_long_first_boot_socket_path_fails_before_native_work_and_records_safe_e
 
 
 @pytest.fixture
-def patched_first_boot(tmp_path):
-    source = Paths().backend / "setup/create-vm.sh"
-    if not source.is_file():
-        pytest.skip("the external vphone-linux setup source is required")
-    target = tmp_path / "setup/create-vm.sh"
-    target.parent.mkdir()
-    target.write_bytes(source.read_bytes())
-    patch = creator.Path(__file__).resolve().parents[1] / "patches/0012-first-boot-qmp.patch"
-    check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=tmp_path, capture_output=True)
-    if check.returncode == 0:
-        subprocess.run(["git", "apply", str(patch)], cwd=tmp_path, check=True, capture_output=True)
-    else:
-        subprocess.run(
-            ["git", "apply", "--reverse", "--check", str(patch)],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-    result = re.search(r"^boot_vm\(\) \{.*?^\}", target.read_text(), re.MULTILINE | re.DOTALL)
+def patched_first_boot():
+    backend = os.environ.get("LIMULATOR_BACKEND")
+    source = (
+        creator.Path(backend) / "setup/create-vm.sh"
+        if backend
+        else creator.Path(__file__).parent / "fixtures/first-boot-qmp.sh"
+    )
+    result = re.search(r"^boot_vm\(\) \{.*?^\}", source.read_text(), re.MULTILINE | re.DOTALL)
     assert result is not None
     return result.group()
 
@@ -1242,6 +1260,59 @@ def test_private_helpers_refuse_existing_physical_apple_device(catalog, tmp_path
     monkeypatch.setattr(creator, "_sudo", lambda *args, **kwargs: pytest.fail("must not mutate host"))
     with pytest.raises(RuntimeError, match="will not take over live devices"):
         helper.start()
+
+
+def test_private_helpers_publish_both_ready_aliases_only_after_private_socket(catalog, tmp_path, monkeypatch):
+    env = {"LIMULATOR_CREATOR_USB_READY": "0", "VPHONE_CREATOR_USB_READY": "0"}
+    helper = creator._USBHelpers(catalog, tmp_path, env, "owned.scope")
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: [])
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: {})
+    monkeypatch.setattr(creator, "_sudo", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(creator, "_identity", lambda _pid: {"pid": 1234})
+    monkeypatch.setattr(
+        creator.socket,
+        "socket",
+        lambda *_args: nullcontext(SimpleNamespace(setsockopt=lambda *_: None, bind=lambda *_: None)),
+    )
+
+    def start_daemon(_command, **_kwargs):
+        assert env["LIMULATOR_CREATOR_USB_READY"] == env["VPHONE_CREATOR_USB_READY"] == "0"
+        return SimpleNamespace(pid=1234, poll=lambda: None)
+
+    ready = iter((False, True))
+
+    def socket_ready(path):
+        assert path == tmp_path / "usbmuxd.sock"
+        assert env["LIMULATOR_CREATOR_USB_READY"] == env["VPHONE_CREATOR_USB_READY"] == "0"
+        return next(ready)
+
+    monkeypatch.setattr(creator.subprocess, "Popen", start_daemon)
+    monkeypatch.setattr(creator.Path, "is_socket", socket_ready)
+    monkeypatch.setattr(creator.time, "sleep", lambda _seconds: None)
+    helper.start()
+    assert env["LIMULATOR_CREATOR_USB_READY"] == env["VPHONE_CREATOR_USB_READY"] == "1"
+    assert env["USBMUXD_SOCKET_ADDRESS"] == f"UNIX:{tmp_path / 'usbmuxd.sock'}"
+
+
+@pytest.mark.parametrize("suffix", ["FIRST_BOOT_TIMEOUT", "SHUTDOWN_TIMEOUT", "MIGRATION_TIMEOUT"])
+@pytest.mark.parametrize(
+    "legacy,generic,expected",
+    [(None, None, None), ("17", None, "17"), (None, "23", "23"), ("17", "99", "17"), ("", "99", "")],
+)
+def test_native_environment_keeps_timeout_aliases_consistent(
+    catalog, monkeypatch, suffix, legacy, generic, expected
+):
+    legacy_key, generic_key = f"LIMULATOR_{suffix}", f"VPHONE_{suffix}"
+    for key, value in ((legacy_key, legacy), (generic_key, generic)):
+        monkeypatch.delenv(key, raising=False)
+        if value is not None:
+            monkeypatch.setenv(key, value)
+    env = creator._native_env(catalog)
+    if expected is None:
+        assert legacy_key not in env and generic_key not in env
+    else:
+        assert env[legacy_key] == env[generic_key] == expected
 
 
 def test_attacher_refuses_unowned_local_listener(catalog, tmp_path, monkeypatch):

@@ -10,12 +10,16 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = Path(
-    os.environ.get("LIMULATOR_BACKEND", Path.home() / ".local/share/limulator/backends/vphone-linux")
-)
+BACKEND = Path(os.environ["LIMULATOR_BACKEND"]) if "LIMULATOR_BACKEND" in os.environ else None
 VERSION = json.loads((ROOT / "third_party.lock.json").read_text())["vphone_cli"]["version"]
-UPSTREAM = Path(os.environ.get("VPHONE_CLI", BACKEND / "cpu-tree" / f"vphone-cli-{VERSION}"))
-SOURCE = UPSTREAM / "VPhoneExecutable/VPhoneCommand/VPhoneRestore/MobileRecoveryCore/libirecovery.c"
+UPSTREAM = (
+    Path(os.environ.get("VPHONE_CLI", BACKEND / "cpu-tree" / f"vphone-cli-{VERSION}")) if BACKEND else None
+)
+SOURCE = (
+    UPSTREAM / "VPhoneExecutable/VPhoneCommand/VPhoneRestore/MobileRecoveryCore/libirecovery.c"
+    if UPSTREAM
+    else None
+)
 
 HARNESS = r"""
 #include <assert.h>
@@ -94,24 +98,16 @@ def lifecycle_harness(source):
 @pytest.mark.parametrize("configuration,failures", [(0, 1), (1, 1), (0, 3)])
 def test_setup_failure_retries_without_reusing_freed_client(tmp_path, configuration, failures):
     compiler = shutil.which("clang") or shutil.which("cc")
-    if compiler is None or not SOURCE.is_file():
-        pytest.skip("the external vphone-linux backend and a C compiler are required")
+    if compiler is None or BACKEND is None:
+        pytest.skip("an explicitly selected LIMULATOR_BACKEND fork checkout and a C compiler are required")
+    assert SOURCE is not None and SOURCE.is_file(), "the selected CLI fork is missing libirecovery.c"
 
     # Exercise the same edits and source sync used by bootstrap_backend.sh cli.
     build = tmp_path / "linux-create"
     build.mkdir()
     for directory in ("edits", "excludes", "overlay"):
         shutil.copytree(BACKEND / "linux-create" / directory, build / directory)
-    # This patch adds the file. Start before it even if bootstrap already applied it.
-    (build / "edits/MobileRecoveryCore.txt").unlink(missing_ok=True)
     shutil.copy2(BACKEND / "linux-create/sync-sources.sh", build)
-    subprocess.run(
-        ["git", "apply", str(ROOT / "patches/0005-clear-failed-recovery-client.patch")],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
     subprocess.run(
         ["bash", str(build / "sync-sources.sh")],
         env={**os.environ, "VPHONE_CLI": str(UPSTREAM)},

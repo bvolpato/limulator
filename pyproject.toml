@@ -35,5 +35,4 @@ packages = ["src/limulator"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "tools" = "limulator/_tools"
-"patches" = "limulator/patches"
 "third_party.lock.json" = "limulator/third_party.lock.json"

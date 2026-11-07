@@ -8,7 +8,7 @@ Limulator uses an emulated ARM64 iPhone. UIKit and SwiftUI run inside iOS; the c
 
 The selected backend is [vphone-linux](https://github.com/YahiaAngelo/vphone-linux), pinned with its QEMU, Reims vGPU, and Metal-to-Vulkan dependencies. The upstream project reports iOS 27.0.1 and iPhone Duo/iOS 27.1 on x86 Linux. Those reports are inputs to our validation, not proof that this workstation works.
 
-Limulator keeps that backend as a separate source dependency. [The lock file](third_party.lock.json) pins its revisions and the checksums of our [reviewed patches](patches/). Emulator and guest-component fixes should be developed in focused forks and contributed upstream; Limulator owns the build workflow, device management, console, and acceptance checks. Copying the emulator into this repository would duplicate its maintenance and make upstream updates harder to review.
+Limulator keeps that backend as a separate source dependency. [The lock file](third_party.lock.json) pins complete commits in our dependency forks, rather than applying a local patch series during installation. [Upstream contributions](docs/UPSTREAM.md) records the ownership of each change, its pull request, and the process for returning to upstream revisions. Limulator owns the build workflow, device management, console, and acceptance checks.
 
 For the normal development loop, use [Build, deploy, and test apps](docs/APP_WORKFLOW.md). It reuses an existing guest and separates app updates from the one-time firmware and tool setup. See [the setup guide](docs/SETUP.md) for installation, and [the research](docs/RESEARCH.md) and [architecture](docs/ARCHITECTURE.md) for the decision, acceptance criteria, and fidelity limits.
 
@@ -29,4 +29,4 @@ The execution stack is the work of vphone-linux, vphone-cli, ChefKiss/QEMU, Reim
 
 ## License
 
-Limulator's original code is available under the [MIT License](LICENSE). Derived patches and the SMC benchmark retain their upstream licenses and notices, listed in [the third-party notices](THIRD_PARTY_NOTICES.md). Apple firmware, SDKs, and guest disks are not included.
+Limulator's original code is available under the [MIT License](LICENSE). Dependencies and derived benchmark fixtures retain their upstream licenses and notices, listed in [the third-party notices](THIRD_PARTY_NOTICES.md). Apple firmware, SDKs, and guest disks are not included.
