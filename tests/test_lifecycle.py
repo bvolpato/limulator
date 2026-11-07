@@ -243,7 +243,10 @@ def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, 
         fakebin = paths.prefix / "bin"
         fakebin.mkdir(parents=True)
         scope = fakebin / "systemd-run"
-        scope.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
+        scope.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_SCOPE_CAPTURE"\n'
+            'while [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n'
+        )
         scope.chmod(0o700)
         program = """
 import json,os,socket,sys,time
@@ -268,6 +271,8 @@ server.close()
         monkeypatch.setenv("FAKE_QEMU_PROGRAM", program)
         env_capture = paths.data / "qemu-env.json"
         monkeypatch.setenv("FAKE_ENV_CAPTURE", str(env_capture))
+        scope_capture = paths.data / "scope-args.txt"
+        monkeypatch.setenv("FAKE_SCOPE_CAPTURE", str(scope_capture))
         monkeypatch.setenv("FAKE_PYTHON_HOME", sys.base_prefix)
         monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
         isolated = replace(device, cid=500001)
@@ -296,6 +301,10 @@ server.close()
             assert actual_env["REIMS_VGPU_WINDOW_CONTROL"] == (
                 f"{runtime._metadata()['run_dir']}/window.sock"
             )
+            scope_args = scope_capture.read_text().splitlines()
+            assert "MemoryHigh=32G" in scope_args
+            assert "MemoryMax=40G" in scope_args
+            assert ("MemorySwapMax=0" if window else "MemorySwapMax=4G") in scope_args
             assert lifecycle._identity_alive(runtime._metadata()["supervisor"])
             with pytest.raises(RuntimeError, match="already owned"):
                 lifecycle._lock_disk(isolated.vm_path / "Disk.img")
