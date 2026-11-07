@@ -44,6 +44,25 @@ def test_create_profile_resolves_model_os_and_scale(monkeypatch, tmp_path):
     assert calls[0][1:] == ("mini", "iPad16,1", "27.0.1", 43, 2)
 
 
+def test_create_accepts_explicit_graphics_mode(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr("limulator.creator.create_device", lambda *args, **kwargs: calls.append(kwargs) or {})
+
+    assert cli.main(["--data", str(tmp_path), "create", "--graphics-mode", "diagnostic"]) == 0
+    assert calls[0]["graphics_mode"] == "diagnostic"
+
+
+def test_start_passes_explicit_graphics_mode(monkeypatch, tmp_path):
+    runtime = Mock()
+    runtime.start.return_value = {"state": "booting"}
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: runtime)
+    monkeypatch.setattr(cli, "DeviceService", lambda selected_runtime: object())
+
+    assert cli.main(["--data", str(tmp_path), "start", "--graphics-mode", "diagnostic"]) == 0
+    runtime.start.assert_called_once_with(window=False, wait_timeout=300, graphics_mode="diagnostic")
+
+
 @pytest.mark.parametrize("override", [["--model", "iPhone19,4"], ["--ios", "27.1"], ["--scale", "3"]])
 def test_create_rejects_contradictory_profile_before_creation(monkeypatch, tmp_path, override):
     monkeypatch.setattr(
@@ -115,6 +134,36 @@ def test_run_unlocks_after_install_and_stops_before_launch_if_unlock_fails(
         expected.append(call.launch("com.example.Example"))
         assert result == 0
     assert workflow.mock_calls == expected
+
+
+def test_run_rejects_explicit_graphics_mode_mismatch_when_reusing_running_guest(
+    monkeypatch, tmp_path, capsys
+):
+    workflow = Mock()
+    workflow.build.return_value = tmp_path / "Example.ipa"
+    workflow.status.return_value = {"state": "running"}
+    workflow.require_graphics_mode.side_effect = RuntimeError(
+        "device 'duo' has graphics mode unknown; stop it and start it with strict"
+    )
+    runtime = SimpleNamespace(
+        status=workflow.status,
+        start=workflow.start,
+        require_graphics_mode=workflow.require_graphics_mode,
+    )
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: runtime)
+    monkeypatch.setattr(cli, "DeviceService", lambda selected_runtime: SimpleNamespace())
+    monkeypatch.setattr(cli, "_build_project", workflow.build)
+
+    result = cli.main(
+        ["--data", str(tmp_path), "run", str(tmp_path / "Example"), "--graphics-mode", "strict"]
+    )
+
+    assert result == 1
+    assert "graphics mode unknown" in capsys.readouterr().err
+    workflow.build.assert_not_called()
+    workflow.status.assert_not_called()
+    workflow.start.assert_not_called()
 
 
 def test_console_caches_each_named_devices_frame_without_polling_catalog(monkeypatch, tmp_path):

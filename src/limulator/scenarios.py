@@ -695,6 +695,7 @@ def run_scenario(service: DeviceService, scenario_path: Path, output: Path) -> d
         "started_at": datetime.now(timezone.utc).isoformat(),
         "steps": [],
         "screenshots": [],
+        "graphics_policy": {"mode": "unknown", "reims_vgpu_exact": {"known": False}},
         "_started_monotonic": time.monotonic(),
     }
     try:
@@ -708,6 +709,7 @@ def run_scenario(service: DeviceService, scenario_path: Path, output: Path) -> d
         actions = _validate_steps(document)
         report["scenario_sha256"] = input_digest
         report["step_count"] = len(actions)
+        report["graphics_policy"] = service.status()["graphics_policy"]
     except Exception as exc:
         if "scenario_sha256" not in report:
             report["scenario_sha256"] = None

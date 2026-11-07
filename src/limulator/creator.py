@@ -25,6 +25,13 @@ import uuid
 from pathlib import Path
 
 from . import _creation_cleanup
+from .graphics import (
+    apply_graphics_environment,
+    graphics_policy_metadata,
+    recorded_graphics_mode,
+    require_graphics_mode,
+    select_graphics_mode,
+)
 from .lifecycle import (
     Device,
     Paths,
@@ -1191,14 +1198,19 @@ def create_device(
     scale: int | None,
     *,
     fresh_disk: bool = False,
+    graphics_mode: str | None = None,
 ) -> dict:
+    selected_mode, explicit_mode = select_graphics_mode(graphics_mode)
     _validate_name(name)
     profile = profile_for(model, ios)
     candidate, registered = _resolve_candidate(paths, name, profile, cid, scale)
     if registered:
         if fresh_disk:
             raise ValueError("fresh disk recovery is unavailable for a registered device")
-        return Runtime(paths, candidate).status() | {"cid": candidate.cid}
+        status = Runtime(paths, candidate).status()
+        if explicit_mode:
+            require_graphics_mode(name, recorded_graphics_mode(status), selected_mode)
+        return status | {"cid": candidate.cid}
     _, pairing = _pairing(paths, model, ios)
     if not profile.firmware_metadata_ready:
         raise RuntimeError(f"profile {profile.id} does not have verified firmware metadata")
@@ -1215,19 +1227,33 @@ def create_device(
             if registered:
                 if fresh_disk:
                     raise ValueError("fresh disk recovery is unavailable for a registered device")
-                return Runtime(paths, candidate).status() | {"cid": candidate.cid}
+                status = Runtime(paths, candidate).status()
+                if explicit_mode:
+                    require_graphics_mode(name, recorded_graphics_mode(status), selected_mode)
+                return status | {"cid": candidate.cid}
+            old_receipt = _read_json(candidate.vm_path / ".limulator-create.json")
+            if not explicit_mode and old_receipt is not None:
+                recorded_mode = recorded_graphics_mode(old_receipt)
+                if recorded_mode != "unknown":
+                    selected_mode = recorded_mode
             if fresh_disk:
-                _fresh_disk_allowed(
-                    paths, candidate, _read_json(candidate.vm_path / ".limulator-create.json")
-                )
+                _fresh_disk_allowed(paths, candidate, old_receipt)
             options = {"fresh_disk": True} if fresh_disk else {}
+            if selected_mode != "strict":
+                options["graphics_mode"] = selected_mode
             return _create_locked(paths, candidate, profile, pairing, **options) | {"cid": candidate.cid}
         finally:
             os.close(host_guard)
 
 
 def _create_locked(
-    paths: Paths, candidate: Device, profile: DeviceProfile, pairing: dict, *, fresh_disk: bool = False
+    paths: Paths,
+    candidate: Device,
+    profile: DeviceProfile,
+    pairing: dict,
+    *,
+    fresh_disk: bool = False,
+    graphics_mode: str = "strict",
 ) -> dict:
     _resource_guard()
     env = _native_env(paths)
@@ -1241,7 +1267,9 @@ def _create_locked(
         raise RuntimeError(
             "guest creation requires at least 80 GiB free for firmware, restore trees, and preserved images"
         )
-    return _pipeline(paths, candidate, profile, pairing, env, fresh_disk=fresh_disk)
+    return _pipeline(
+        paths, candidate, profile, pairing, env, fresh_disk=fresh_disk, graphics_mode=graphics_mode
+    )
 
 
 def _first_boot_qmp_path(run_dir: Path) -> Path:
@@ -1262,6 +1290,7 @@ def _pipeline(
     env: dict[str, str],
     *,
     fresh_disk: bool = False,
+    graphics_mode: str = "strict",
 ) -> dict:
     vm = candidate.vm_path
     _require_cache_publication_complete(vm)
@@ -1286,6 +1315,7 @@ def _pipeline(
     state.update(
         state="creating",
         process=_identity(os.getpid()),
+        graphics_policy=graphics_policy_metadata(graphics_mode, env),
         profile_id=profile.id,
         migration_expected_build=expected_migration_build,
         upstream_linux_tested=profile.upstream_linux_tested,
@@ -1294,7 +1324,10 @@ def _pipeline(
     unit = f"limulator-create-{os.getuid()}-{uuid.uuid4().hex[:8]}.scope"
     run_dir = Path(tempfile.mkdtemp(prefix="create-", dir=vm))
     state["run_dir"] = str(run_dir)
-    env.update(VSOCK="vhost", VSOCK_DIR=str(run_dir / "vsock"), REIMS_VGPU_CENSUS_DIR=str(run_dir / "census"))
+    env.update(VSOCK="vhost", VSOCK_DIR=str(run_dir / "vsock"))
+    apply_graphics_environment(env, graphics_mode, run_dir / "census")
+    state["graphics_policy"] = graphics_policy_metadata(graphics_mode, env)
+    _atomic_json(state_path, state)
     trace_enabled = env.get("LIMULATOR_USB_TRACE") == "1"
     env["LIMULATOR_USB_TRACE"] = env["VPHONE_USB_TRACE"] = "1" if trace_enabled else "0"
     if trace_enabled:
@@ -1541,7 +1574,7 @@ def _pipeline(
         Registry(paths).register(device)
         state.update(state="created", stage="owned-runtime-start")
         _atomic_json(state_path, state)
-        result = runtime.start(wait_timeout=600)
+        result = runtime.start(wait_timeout=600, graphics_mode=graphics_mode)
         if result["state"] != "running":
             raise RuntimeError(f"created guest did not reach its owned runtime API: {result}")
         final_unlock = runtime.guest(timeout=120).rpc("screen.unlock", {"timeout": 60})

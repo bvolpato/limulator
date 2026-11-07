@@ -34,6 +34,76 @@ def test_paths_use_home_and_backend_overrides(tmp_path, monkeypatch):
     assert paths.prefix == paths.data / "tools"
 
 
+def test_graphics_modes_override_inherited_strict_and_census_flags(tmp_path):
+    inherited = {
+        "REIMS_VGPU_STRICT": "0",
+        "REIMS_VGPU_CENSUS_DIR": "/inherited/census",
+        "REIMS_VGPU_EXACT": "batch_order",
+        "REIMS_VGPU_DIRTY_PAGE_TRACKING": "0",
+    }
+
+    strict = dict(inherited)
+    lifecycle.apply_graphics_environment(strict, "strict", tmp_path / "strict-census")
+    assert strict["REIMS_VGPU_STRICT"] == "1"
+    assert strict["REIMS_VGPU_CENSUS_DIR"] == ""
+    assert strict["REIMS_VGPU_EXACT"] == "batch_order"
+    assert strict["REIMS_VGPU_DIRTY_PAGE_TRACKING"] == "0"
+
+    diagnostic = dict(inherited)
+    census = tmp_path / "diagnostic-census"
+    lifecycle.apply_graphics_environment(diagnostic, "diagnostic", census)
+    assert diagnostic["REIMS_VGPU_STRICT"] == "0"
+    assert diagnostic["REIMS_VGPU_CENSUS_DIR"] == str(census)
+    assert diagnostic["REIMS_VGPU_EXACT"] == "batch_order"
+    assert diagnostic["REIMS_VGPU_DIRTY_PAGE_TRACKING"] == "0"
+
+
+def test_graphics_mode_environment_selects_a_new_launch_mode(monkeypatch):
+    monkeypatch.delenv("LIMULATOR_GRAPHICS_MODE", raising=False)
+    assert lifecycle.select_graphics_mode(None) == ("strict", False)
+
+    monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "diagnostic")
+    assert lifecycle.select_graphics_mode(None) == ("diagnostic", True)
+
+    monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "metal")
+    with pytest.raises(ValueError, match="graphics mode must be strict or diagnostic"):
+        lifecycle.select_graphics_mode(None)
+
+
+def test_start_reports_mode_mismatch_for_legacy_active_session(device, tmp_path, monkeypatch):
+    runtime = Runtime(Paths(tmp_path / "data"), device)
+    runtime.runtime_path.parent.mkdir(parents=True)
+    lifecycle._atomic_json(
+        runtime.runtime_path,
+        {
+            "name": device.name,
+            "process": {"pid": 123},
+            "supervisor": {"pid": 123},
+        },
+    )
+    monkeypatch.setattr(lifecycle, "_identity_alive", lambda identity: identity is not None)
+    monkeypatch.setattr(runtime, "status", lambda: pytest.fail("an explicit mismatch must fail"))
+
+    with pytest.raises(RuntimeError, match="graphics mode unknown.*Stop it.*start it"):
+        runtime.start(graphics_mode="strict")
+
+
+def test_status_marks_unrecorded_graphics_mode_unknown(device, tmp_path):
+    runtime = Runtime(Paths(tmp_path / "data"), device)
+    runtime.runtime_path.parent.mkdir(parents=True)
+    process = lifecycle._identity(os.getpid())
+    stale = {**process, "start_ticks": process["start_ticks"] + 1}
+    lifecycle._atomic_json(
+        runtime.runtime_path,
+        {"name": device.name, "process": stale},
+    )
+
+    assert runtime.status()["graphics_policy"] == {
+        "mode": "unknown",
+        "reims_vgpu_exact": {"known": False},
+    }
+
+
 @pytest.mark.parametrize("name", ["", "../escape", "/absolute", ".", "a.b", "phone/other", "a\n", "é"])
 def test_names_cannot_escape_registry(device, name):
     with pytest.raises(ValueError, match="device name"):
@@ -172,6 +242,7 @@ def test_running_requires_successful_live_guest_health(device, tmp_path, monkeyp
     guest = FakeGuest()
     monkeypatch.setattr(runtime, "guest", lambda **kwargs: guest)
     assert runtime.status()["state"] == "running"
+    assert runtime.status()["graphics_policy"]["mode"] == "unknown"
     guest.body = b'{"status":"starting"}'
     assert runtime.status()["state"] == "booting"
     guest.body = b"invalid json"
@@ -226,7 +297,10 @@ def test_resource_guard_rejects_low_memory_without_starting_workload(monkeypatch
 
 
 @pytest.mark.parametrize("window", [False, True])
-def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, monkeypatch, window):
+@pytest.mark.parametrize("graphics_mode", ["strict", "diagnostic"])
+def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(
+    device, monkeypatch, window, graphics_mode
+):
     # Run the real supervisor against a tiny QMP peer with a QEMU-named executable.
     # The fake scope launcher consumes no guest RAM and does not contact systemd.
     with tempfile.TemporaryDirectory(prefix="lim-life-") as temporary:
@@ -251,7 +325,9 @@ def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, 
         program = """
 import json,os,socket,sys,time
 qmp = sys.argv[sys.argv.index('-qmp') + 1].split(',')[0].removeprefix('unix:')
-environment = {key: os.environ.get(key) for key in ('WINDOW','TOOLBAR','REIMS_VGPU_WINDOW_CONTROL')}
+environment = {key: os.environ.get(key) for key in (
+    'WINDOW','TOOLBAR','REIMS_VGPU_WINDOW_CONTROL','REIMS_VGPU_STRICT',
+    'REIMS_VGPU_CENSUS_DIR','REIMS_VGPU_EXACT')}
 with open(os.environ['FAKE_ENV_CAPTURE'], 'w') as f:
     json.dump(environment, f)
 time.sleep(0.5)
@@ -275,13 +351,17 @@ server.close()
         monkeypatch.setenv("FAKE_SCOPE_CAPTURE", str(scope_capture))
         monkeypatch.setenv("FAKE_PYTHON_HOME", sys.base_prefix)
         monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
+        monkeypatch.setenv("REIMS_VGPU_STRICT", "0" if graphics_mode == "strict" else "1")
+        monkeypatch.setenv("REIMS_VGPU_CENSUS_DIR", "/inherited/census")
+        monkeypatch.setenv("REIMS_VGPU_EXACT", "pipeline_waits")
         isolated = replace(device, cid=500001)
         Registry(paths).register(isolated)
         runtime = Runtime(paths, isolated)
         command = (
             "from pathlib import Path; from limulator.lifecycle import Paths,Registry,Runtime; "
             "import limulator.lifecycle as life; life._resource_guard=lambda:None; "
-            f"p=Paths(Path({str(paths.data)!r})); Runtime(p,Registry(p).get('phone')).start(window={window!r})"
+            f"p=Paths(Path({str(paths.data)!r})); Runtime(p,Registry(p).get('phone')).start("
+            f"window={window!r},graphics_mode={graphics_mode!r})"
         )
         subprocess.run([sys.executable, "-c", command], check=True, timeout=15)
         # The starting CLI has exited. Its independent worker must retain ownership.
@@ -301,6 +381,15 @@ server.close()
             assert actual_env["REIMS_VGPU_WINDOW_CONTROL"] == (
                 f"{runtime._metadata()['run_dir']}/window.sock"
             )
+            assert actual_env["REIMS_VGPU_STRICT"] == ("1" if graphics_mode == "strict" else "0")
+            assert actual_env["REIMS_VGPU_CENSUS_DIR"] == (
+                "" if graphics_mode == "strict" else f"{runtime._metadata()['run_dir']}/census"
+            )
+            assert actual_env["REIMS_VGPU_EXACT"] == "pipeline_waits"
+            assert runtime.status()["graphics_policy"] == {
+                "mode": graphics_mode,
+                "reims_vgpu_exact": {"known": True, "set": True, "value": "pipeline_waits"},
+            }
             scope_args = scope_capture.read_text().splitlines()
             assert "MemoryHigh=32G" in scope_args
             assert "MemoryMax=40G" in scope_args

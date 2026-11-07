@@ -247,6 +247,35 @@ def test_missing_cid_uses_free_registered_and_pending_reservations(catalog, monk
         creator.create_device(catalog, "phone", "iPhone17,3", "27.0.1", 42, None)
 
 
+def test_explicit_graphics_mode_is_passed_to_new_creation(catalog, monkeypatch):
+    seen = []
+
+    def create(_paths, candidate, _profile, _pairing, **options):
+        seen.append((candidate, options))
+        return {"state": "created"}
+
+    monkeypatch.setattr(creator, "_create_locked", create)
+    result = creator.create_device(
+        catalog, "phone", "iPhone17,3", "27.0.1", 41, 3, graphics_mode="diagnostic"
+    )
+
+    assert result["state"] == "created"
+    assert seen[0][1]["graphics_mode"] == "diagnostic"
+
+
+def test_create_refuses_to_change_registered_graphics_mode(catalog):
+    device = _registered_device(catalog, "phone", "iphone-duo", 41)
+    runtime_path = catalog.runs / device.name / "runtime.json"
+    runtime_path.parent.mkdir(parents=True)
+    creator._atomic_json(
+        runtime_path,
+        {"name": device.name, "graphics_policy": {"mode": "diagnostic"}},
+    )
+
+    with pytest.raises(RuntimeError, match="graphics mode diagnostic.*Stop it.*start it"):
+        creator.create_device(catalog, "phone", "iPhone19,4", "27.1", None, None, graphics_mode="strict")
+
+
 def test_missing_cid_and_scale_reuse_legacy_duo_resume_specification(catalog, monkeypatch):
     vm = catalog.vms / "duo"
     vm.mkdir(parents=True)
@@ -266,6 +295,38 @@ def test_missing_cid_and_scale_reuse_legacy_duo_resume_specification(catalog, mo
     assert creator._read_json(vm / ".limulator-create.json") == old
     with pytest.raises(ValueError, match="CID differs"):
         creator.create_device(catalog, "duo", "iPhone19,4", "27.1", 49, None)
+
+
+@pytest.mark.parametrize("fresh_disk", [False, True])
+@pytest.mark.parametrize(
+    ("requested_mode", "expected_mode"), [("diagnostic", "diagnostic"), (None, "strict")]
+)
+def test_incomplete_creation_can_select_a_new_graphics_mode(
+    catalog, monkeypatch, fresh_disk, requested_mode, expected_mode
+):
+    monkeypatch.delenv("LIMULATOR_GRAPHICS_MODE", raising=False)
+    candidate, receipt = _incomplete_vm(catalog)
+    receipt["graphics_policy"] = {"mode": "strict"}
+    creator._atomic_json(candidate.vm_path / ".limulator-create.json", receipt)
+    seen = []
+
+    def create(_paths, _candidate, _profile, _pairing, *, fresh_disk=False, graphics_mode="strict"):
+        seen.append((fresh_disk, graphics_mode))
+        return {"state": "created"}
+
+    monkeypatch.setattr(creator, "_create_locked", create)
+    options = {"fresh_disk": fresh_disk}
+    if requested_mode is not None:
+        options["graphics_mode"] = requested_mode
+    result = creator.create_device(
+        catalog, candidate.name, candidate.model, candidate.os_version, None, None, **options
+    )
+
+    assert result["state"] == "created"
+    assert seen == [(fresh_disk, expected_mode)]
+    assert creator._read_json(candidate.vm_path / ".limulator-create.json")["graphics_policy"]["mode"] == (
+        "strict"
+    )
 
 
 def test_active_external_vhost_cid_is_avoided_before_creation(catalog, monkeypatch):
@@ -826,11 +887,22 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
     monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
     monkeypatch.setattr(creator, "_resume_completed_boot", lambda *_: None)
     monkeypatch.setattr(creator._USBHelpers, "start", lambda self: None)
+
+    launch_environments = []
+
+    def launch(*_args, **kwargs):
+        launch_environments.append(kwargs["env"])
+        return SimpleNamespace(pid=os.getpid(), poll=lambda: 0, returncode=0)
+
     monkeypatch.setattr(
         creator.subprocess,
         "Popen",
-        lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: 0, returncode=0),
+        launch,
     )
+    monkeypatch.setenv("REIMS_VGPU_STRICT", "0")
+    monkeypatch.setenv("REIMS_VGPU_CENSUS_DIR", "/inherited/census")
+    monkeypatch.setenv("REIMS_VGPU_EXACT", "batch_order")
+    monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "diagnostic")
     guest_clients = []
 
     class Guest:
@@ -848,13 +920,16 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
     monkeypatch.setattr(creator, "_verified_guest_info", lambda *_: {"ios_version": candidate.os_version})
     monkeypatch.setattr(creator, "_stop_creation_guest", lambda *_: None)
     runtime_guest_calls = []
+    runtime_start_modes = []
 
     class Runtime:
         def __init__(self, *_):
             pass
 
-        def start(self, *, wait_timeout):
+        def start(self, *, wait_timeout, graphics_mode):
             assert wait_timeout == 600
+            runtime_start_modes.append(graphics_mode)
+            assert graphics_mode == "strict"
             return {"state": "running"}
 
         def guest(self, *, timeout):
@@ -892,10 +967,30 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
     monkeypatch.setattr(creator, "_cleanup_creation_scope", cleanup_scope)
     monkeypatch.setattr(creator._USBHelpers, "close", close_helpers)
     if failure is None:
-        result = creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+        result = creator._pipeline(
+            catalog,
+            candidate,
+            get_profile("iphone-duo"),
+            {},
+            {
+                "REIMS_VGPU_STRICT": "0",
+                "REIMS_VGPU_CENSUS_DIR": "/inherited/census",
+                "REIMS_VGPU_EXACT": "batch_order",
+            },
+            graphics_mode="strict",
+        )
         assert result["state"] == "running"
+        assert runtime_start_modes == ["strict"]
+        assert launch_environments[0]["REIMS_VGPU_STRICT"] == "1"
+        assert launch_environments[0]["REIMS_VGPU_CENSUS_DIR"] == ""
+        assert launch_environments[0]["REIMS_VGPU_EXACT"] == "batch_order"
         assert Registry(catalog).list() == [candidate]
-        assert creator._read_json(vm / ".limulator-create.json")["state"] == "ready"
+        receipt = creator._read_json(vm / ".limulator-create.json")
+        assert receipt["state"] == "ready"
+        assert receipt["graphics_policy"] == {
+            "mode": "strict",
+            "reims_vgpu_exact": {"known": True, "set": True, "value": "batch_order"},
+        }
         assert [client.options.get("timeout") for client in guest_clients] == [30, 120]
         assert guest_clients[0].calls == [("setup.status", {})]
         assert guest_clients[1].calls == [("screen.unlock", {"timeout": 60})]

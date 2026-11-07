@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .applications import AppError, build_app, inspect_app
+from .graphics import GRAPHICS_MODES
 from .lifecycle import Device, Paths, Registry, Runtime, _validate_name
 from .profiles import get_profile, list_profiles, public_metadata
 from .service import DeviceError, DeviceService, device_metadata
@@ -163,6 +164,10 @@ def parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("phase", nargs="?", default="all", help="backend phase, or xtool")
     commands.add_parser("devices", help="list registered guests")
     commands.add_parser("profiles", help="list available iPhone, iPad, and Duo profiles")
+    graphics_help = (
+        "strict fails on unsupported vGPU answers; diagnostic records them for inventory. "
+        "Strict is not full Metal equivalence."
+    )
     create = commands.add_parser("create", help="create a local iOS guest from Apple firmware")
     create.add_argument("--profile", help="device profile ID (default: iphone-duo)")
     create.add_argument("--model")
@@ -176,6 +181,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recover a matching incomplete creation by preserving its disk and preparing a fresh one",
     )
+    create.add_argument("--graphics-mode", choices=GRAPHICS_MODES, help=graphics_help)
     register = commands.add_parser("register", help="register an existing VM bundle")
     register.add_argument("vm", type=Path)
     register.add_argument("--model", required=True)
@@ -187,6 +193,7 @@ def parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="start the selected device")
     start.add_argument("--window", action="store_true", help="also open the native emulator window")
     start.add_argument("--wait", type=float, default=300)
+    start.add_argument("--graphics-mode", choices=GRAPHICS_MODES, help=graphics_help)
     commands.add_parser("stop", help="shut down this exact guest")
     commands.add_parser("status", help="read live runtime status")
     build = commands.add_parser("build", help="build a SwiftPM iPhone app with xtool")
@@ -195,6 +202,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("project", type=Path)
         command.add_argument("--xtool", help="xtool executable (default: private installation, then PATH)")
         command.add_argument("--configuration", choices=("debug", "release"), default="debug")
+    run.add_argument("--graphics-mode", choices=GRAPHICS_MODES, help=graphics_help)
     install = commands.add_parser("install", help="install a development .app or .ipa")
     install.add_argument("app", type=Path)
     launch = commands.add_parser("launch", help="launch an installed app")
@@ -265,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
                     value = getattr(args, option)
                     if value is not None and value != expected:
                         raise ValueError(f"--{option} contradicts profile {profile.id}: expected {expected}")
+            options = {"fresh_disk": args.fresh_disk}
+            if args.graphics_mode is not None:
+                options["graphics_mode"] = args.graphics_mode
             _print(
                 create_device(
                     paths,
@@ -273,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.ios or profile.os_version,
                     args.cid,
                     args.scale,
-                    fresh_disk=args.fresh_disk,
+                    **options,
                 )
             )
             return 0
@@ -303,15 +314,27 @@ def main(argv: list[str] | None = None) -> int:
         runtime = Runtime(paths, registry.get(args.device))
         service = DeviceService(runtime)
         if args.command == "start":
-            result = runtime.start(window=args.window, wait_timeout=args.wait)
+            options = {"window": args.window, "wait_timeout": args.wait}
+            if args.graphics_mode is not None:
+                options["graphics_mode"] = args.graphics_mode
+            result = runtime.start(**options)
         elif args.command == "stop":
             result = runtime.stop()
         elif args.command == "status":
             result = service.status()
         elif args.command == "run":
+            explicit_graphics_mode = args.graphics_mode is not None or "LIMULATOR_GRAPHICS_MODE" in os.environ
+            if explicit_graphics_mode:
+                runtime.require_graphics_mode(args.graphics_mode)
             ipa = _build_project(paths, args)
-            if runtime.status()["state"] != "running":
-                runtime.start(wait_timeout=300)
+            if runtime.status()["state"] == "running":
+                if explicit_graphics_mode:
+                    runtime.require_graphics_mode(args.graphics_mode)
+            else:
+                options = {"wait_timeout": 300}
+                if args.graphics_mode is not None:
+                    options["graphics_mode"] = args.graphics_mode
+                runtime.start(**options)
             installed = service.install(ipa)
             service.unlock()
             result = {"install": installed, "launch": service.launch(installed["bundle_id"])}

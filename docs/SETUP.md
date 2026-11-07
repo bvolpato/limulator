@@ -35,7 +35,15 @@ uv run limulator --device iphone-16 create --profile iphone-16 --cid 42
 uv run limulator --device ipad-mini create --profile ipad-mini-a17-pro --cid 43
 ```
 
-The profiles are iPhone Duo on iOS 27.1, the base iPhone 16 on iOS 27.0.1, and iPad mini A17 Pro on iOS 27.0.1. Each profile selects its product type, OS, native geometry, and scale. An explicit model, OS, or scale that contradicts `--profile` is rejected before creation. Use a distinct device name for each guest. You can omit `--cid`: creation reuses that device's saved specification or selects a free CID starting at 41. An explicit CID that belongs to another registered or pending device is rejected before restore. Running `create` without profile options still selects Duo. The catalog distinguishes upstream Linux testing from profiles whose runtime verification is pending; an available profile does not establish that its guest has run on this workstation.
+The profiles are iPhone Duo on iOS 27.1, the base iPhone 16 on iOS 27.0.1, and iPad mini A17 Pro on iOS 27.0.1. Each profile selects its product type, OS, native geometry, and scale. These guest settings do not identify the host Vulkan device or establish that device's GPU capabilities. An explicit model, OS, or scale that contradicts `--profile` is rejected before creation. Use a distinct device name for each guest. You can omit `--cid`: creation reuses that device's saved specification or selects a free CID starting at 41. An explicit CID that belongs to another registered or pending device is rejected before restore. Running `create` without profile options still selects Duo. The catalog distinguishes upstream Linux testing from profiles whose runtime verification is pending; an available profile does not establish that its guest has run on this workstation.
+
+### Choose a graphics policy
+
+New `create`, `start`, and `run` launches use strict mode by default. Each command accepts `--graphics-mode strict` or `--graphics-mode diagnostic`. `LIMULATOR_GRAPHICS_MODE` selects a mode when the command-line option is omitted; the command-line option takes precedence.
+
+Strict mode makes Reims vGPU stop on differences its strict policy classifies as fatal. It does not promise full Metal or physical GPU equivalence. Some native-device results and precision or performance notices remain relayed, so keep stderr warnings with the run evidence. Diagnostic mode is for inventory: it enables Reims vGPU's census, records differences that would otherwise stop the run, and continues. Reims vGPU explicitly marks census runs as not faithful to Metal. See the [pinned Reims vGPU API](https://github.com/YahiaAngelo/reims-vgpu/blob/960bf4b128a2678f032e46eb32964caa4828b818/docs/api.md#L229-L257) and its [pinned answer fate rules](https://github.com/YahiaAngelo/reims-vgpu/blob/960bf4b128a2678f032e46eb32964caa4828b818/crates/reims-vgpu-vulkan/src/answer.rs#L1683-L1695).
+
+Graphics mode applies to a new creation or runtime launch. Limulator does not change a running guest to satisfy a requested mode. A `run` without a selected mode reuses the running guest; an explicit mismatch, including a legacy session whose mode is unknown, fails and asks you to stop and start with the requested mode. `status` reports `graphics_policy.mode: unknown` for older runtime records and never infers a value from the current environment. Stop the guest, then use `start --graphics-mode strict` or `start --graphics-mode diagnostic` to record the next launch's mode. An incomplete, unregistered creation can select a mode when it resumes; without an explicit selection, Limulator preserves its recorded mode when one is available.
 
 ```sh
 uv run limulator --device duo create --model iPhone19,4 --ios 27.1 --cid 41 --scale 3
@@ -141,6 +149,8 @@ uv run limulator test examples/CounterLab/scenarios/duo.json --output artifacts/
 ```
 
 Each run requires a new output directory. It writes `report.json` and genuine guest PNGs with hashes. A failed assertion produces a failing command and attempts a failure capture. If capture itself fails, the report records the error without inventing an image.
+
+The report records the runtime's `graphics_policy`, including its mode and inherited `REIMS_VGPU_EXACT` setting when known. It does not infer historical settings from the current shell. A passing scenario establishes its tested UI behavior, not full Metal equivalence; retain the backend stderr warnings with acceptance evidence.
 
 Semantic taps only select visible accessibility elements. To reach a control below the viewport, add an explicit scroll action before its tap:
 

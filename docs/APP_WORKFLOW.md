@@ -31,6 +31,12 @@ The selected xtool wrapper keeps using its installed Swift toolchain and SDK whe
 
 For repeated use, those three assignments can live in an ignored `.limulator/dev.env` file. Use `uv run --env-file .limulator/dev.env limulator ...` instead of exporting them in every terminal. Keep local paths, VM disks, SDKs, and app artifacts out of Git.
 
+## Select a graphics policy
+
+Use strict mode for normal app testing. It is the default for new launches. To inventory vGPU differences, select `--graphics-mode diagnostic` on `create`, `start`, or `run`, or set `LIMULATOR_GRAPHICS_MODE=diagnostic` for commands without the option. The command-line option takes precedence. Diagnostic mode is for exploration, not acceptance; it records census differences and continues, while stderr notices still need review. Strict mode is not full Metal equivalence. The [setup guide](SETUP.md#choose-a-graphics-policy) describes these limits.
+
+`run` reuses a running guest when no mode is selected. If you request a different mode, Limulator rejects the request without restarting the guest; stop it and start a new session with the chosen mode. Runtime records created before mode tracking report `graphics_policy.mode: unknown`; Limulator does not infer the old mode from the current environment. An explicit mode on `run` is checked before the app build begins.
+
 ## Open the native window once per session
 
 When the selected guest is stopped:
@@ -110,7 +116,7 @@ uv run limulator --device "$limulator_device" test \
   --output artifacts/counterlab-smoke-01
 ```
 
-Each test run needs a new output directory. It writes `report.json` and guest screenshots. Adapt the JSON scenario and accessibility identifiers for your app. The [setup guide](SETUP.md#run-app-checks) explains scenario actions and their limits. The existence of a scenario does not establish that it has passed on every profile.
+Each test run needs a new output directory. It writes `report.json` with the recorded graphics policy and guest screenshots. Adapt the JSON scenario and accessibility identifiers for your app. The [setup guide](SETUP.md#run-app-checks) explains scenario actions and their limits. The existence of a scenario does not establish that it has passed on every profile, and a functional pass does not establish full Metal equivalence.
 
 ## Shortest path for each change
 
@@ -138,4 +144,4 @@ uv run limulator --device "$limulator_device" stop
 
 For a repository update, stop the guest first, pull without discarding local work, and run `uv sync --locked`. When dependency revisions change, follow [the source migration instructions](UPSTREAM.md#updating-an-existing-installation) and rebuild only the affected backend component. Re-running `bootstrap all`, deleting build caches, or restoring the VM for each app change adds unnecessary work.
 
-Clean guest creation, Duo/iPad behavior, and complete native scenario acceptance remain subject to the limits in the [README](../README.md). A reusable diagnostic guest is useful for development but does not establish distribution readiness.
+Clean guest creation, Duo/iPad behavior, and complete native scenario acceptance remain subject to the limits in the [README](../README.md). A reusable exploratory guest is useful for development but does not establish distribution readiness.

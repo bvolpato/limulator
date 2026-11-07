@@ -40,6 +40,9 @@ class FakeService:
         self.screen_info = screen if screen is not None else {"width": 100, "height": 150, "scale": 2}
         self.screen_timeouts: list[float] = []
 
+    def status(self) -> dict[str, Any]:
+        return {"graphics_policy": {"mode": "unknown", "reims_vgpu_exact": {"known": False}}}
+
     def _input(self, name: str, *args: Any) -> dict[str, Any]:
         self.inputs.append((name, args))
         if name == self.fail_action:
@@ -148,6 +151,7 @@ def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(
     report = run_scenario(service, path, output)
 
     assert report["status"] == "passed"
+    assert report["graphics_policy"]["mode"] == "unknown"
     assert report["step_count"] == len(document["steps"])
     assert len(report["steps"]) == len(document["steps"])
     assert all(step["status"] == "passed" for step in report["steps"])
@@ -178,6 +182,24 @@ def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(
         assert screenshot["width"] == 200
         assert screenshot["height"] == 300
         assert screenshot["identity"] == "200x300:0"
+
+
+@pytest.mark.parametrize("mode", ["strict", "diagnostic", "unknown"])
+def test_report_keeps_recorded_graphics_policy_on_action_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "diagnostic" if mode == "strict" else "strict")
+    policy = {"mode": mode, "reims_vgpu_exact": {"known": True, "set": True, "value": "all"}}
+    service = FakeService(fail_action="tap")
+    monkeypatch.setattr(service, "status", lambda: {"graphics_policy": policy})
+    path = _write_scenario(tmp_path, {"version": 1, "steps": [{"action": "tap", "x": 1, "y": 2}]})
+
+    with pytest.raises(ScenarioError) as error:
+        run_scenario(service, path, tmp_path / "failed-run")
+
+    report = json.loads(error.value.report_path.read_text())
+    assert report["graphics_policy"] == policy
+    assert report["status"] == "failed"
 
 
 @pytest.mark.parametrize(

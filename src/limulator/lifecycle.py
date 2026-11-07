@@ -21,6 +21,15 @@ from pathlib import Path
 from typing import Any
 from xml.parsers.expat import ExpatError
 
+from .graphics import (
+    DEFAULT_GRAPHICS_MODE,
+    GRAPHICS_MODES,
+    apply_graphics_environment,
+    graphics_policy_metadata,
+    recorded_graphics_mode,
+    require_graphics_mode,
+    select_graphics_mode,
+)
 from .protocols import GuestClient, ProtocolError, QMPClient
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -350,6 +359,7 @@ class Runtime:
         result = {
             "name": self.device.name,
             "state": "stopped",
+            "graphics_policy": {"mode": "unknown", "reims_vgpu_exact": {"known": False}},
             "device": {
                 key: getattr(self.device, key) for key in ("model", "os_version", "width", "height", "scale")
             },
@@ -357,6 +367,8 @@ class Runtime:
         }
         try:
             value = self._metadata()
+            if recorded_graphics_mode(value) != "unknown":
+                result["graphics_policy"] = value["graphics_policy"]
             if _identity_alive(value.get("process")):
                 result["state"] = "booting"
                 try:
@@ -377,9 +389,23 @@ class Runtime:
             result.update(state="error", error=str(exc))
         return result
 
-    def start(self, window: bool = False, wait_timeout: float = 0) -> dict[str, Any]:
+    def require_graphics_mode(self, graphics_mode: str | None = None) -> None:
+        selected_mode, explicit_mode = select_graphics_mode(graphics_mode)
+        if not explicit_mode:
+            return
+        value = self._metadata()
+        if _identity_alive(value.get("supervisor")) or _identity_alive(value.get("process")):
+            require_graphics_mode(self.device.name, recorded_graphics_mode(value), selected_mode)
+
+    def start(
+        self,
+        window: bool = False,
+        wait_timeout: float = 0,
+        graphics_mode: str | None = None,
+    ) -> dict[str, Any]:
         if not math.isfinite(wait_timeout) or wait_timeout < 0:
             raise ValueError("wait_timeout must be finite and nonnegative")
+        selected_mode, explicit_mode = select_graphics_mode(graphics_mode)
         _require_cache_publication_complete(self.device.vm_path)
         self.device.validate_vm()
         _private_directory(self.runtime_path.parent)
@@ -387,6 +413,8 @@ class Runtime:
             fcntl.flock(guard, fcntl.LOCK_EX)
             value = self._metadata()
             if _identity_alive(value.get("supervisor")) or _identity_alive(value.get("process")):
+                if explicit_mode:
+                    require_graphics_mode(self.device.name, recorded_graphics_mode(value), selected_mode)
                 raise RuntimeError(f"device is already started: {self.device.name}")
             if not self.status()["backend"]["ready"]:
                 raise RuntimeError(f"backend is not built: {self.paths.backend}")
@@ -412,6 +440,8 @@ class Runtime:
                     self.device.name,
                     "--run-dir",
                     os.fspath(run_dir),
+                    "--graphics-mode",
+                    selected_mode,
                     "--lock-fd",
                     str(fd),
                 ]
@@ -506,6 +536,7 @@ def _is_descendant(pid: int, parent: int) -> bool:
 
 
 def _supervise(args: argparse.Namespace) -> int:
+    graphics_mode = getattr(args, "graphics_mode", DEFAULT_GRAPHICS_MODE)
     paths = Paths(Path(args.data))
     device = Registry(paths).get(args.name)
     runtime = Runtime(paths, device)
@@ -523,6 +554,7 @@ def _supervise(args: argparse.Namespace) -> int:
         "name": device.name,
         "run_dir": os.fspath(run_dir),
         "state": "booting",
+        "graphics_policy": graphics_policy_metadata(graphics_mode, os.environ),
         "supervisor": _identity(os.getpid()),
         "disk": {"dev": disk.st_dev, "ino": disk.st_ino},
     }
@@ -541,10 +573,10 @@ def _supervise(args: argparse.Namespace) -> int:
         MEM="8G",
         VSOCK="vhost",
         VSOCK_DIR=os.fspath(run_dir / "vsock"),
-        REIMS_VGPU_CENSUS_DIR=os.fspath(run_dir / "census"),
         REIMS_VGPU_WINDOW_CONTROL=os.fspath(run_dir / "window.sock"),
         QEMU=os.fspath(paths.backend / "qemu/build/qemu-system-aarch64"),
     )
+    apply_graphics_environment(env, graphics_mode, run_dir / "census")
     env["TOOLBAR"] = "1" if args.window else "0"
     command = [
         "systemd-run",
@@ -617,6 +649,7 @@ def main() -> int:
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--lock-fd", type=int, required=True)
     parser.add_argument("--window", action="store_true")
+    parser.add_argument("--graphics-mode", choices=GRAPHICS_MODES, default=DEFAULT_GRAPHICS_MODE)
     return _supervise(parser.parse_args())
 
 
