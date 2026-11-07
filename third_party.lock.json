@@ -122,6 +122,11 @@
       "path": "patches/0012-first-boot-qmp.patch",
       "sha256": "399bcf5e71d6de782e814fe0bd665524df19ea46f0fab6bdec3f947e8eeb1e63",
       "target": "backend"
+    },
+    {
+      "path": "patches/0013-update-linux-guest-without-restore-tree.patch",
+      "sha256": "9ad1ad3781fd31c87bd01d391fd019412276b5f03d5275923af517a00a1e74e3",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},
