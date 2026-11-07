@@ -20,7 +20,7 @@ The backend and xtool bootstraps pin their source revisions and downloaded tools
 
 Resource-intensive operations use a systemd scope with a 32 GiB soft memory limit, 40 GiB hard limit, and 4 GiB swap limit. They require at least 32 GiB available host RAM and 4 GiB free swap before starting. Available RAM is the current headroom, not the machine's installed memory; a 64 GiB or larger workstation is recommended. Allow roughly 100 GiB free disk for one profile, or 200 GiB for all three profiles, the SDK, firmware caches, and restore work. Preserved recovery disks require additional space.
 
-The xtool host executable uses a Debug build to avoid a Swift 6.4.1 optimizer crash. The app's `--configuration` setting remains independent.
+The native vphone CLI uses a Release build. After updating its patches, rebuild it with `uv run limulator bootstrap cli`; an absent Release product stops creation instead of triggering an implicit build. The xtool host executable uses a Debug build to avoid a Swift 6.4.1 optimizer crash. The app's `--configuration` setting remains independent.
 
 The default data directory is `~/.local/share/limulator`. `LIMULATOR_HOME` or the CLI's `--data` selects another directory. Source and tools live under `backends/` and `tools/`; VM bundles live under `vms/`; device registrations live under `devices/`; runtime logs and sockets live under `runs/`. Firmware stays in the local cache. These files do not belong in Git.
 
@@ -53,7 +53,9 @@ The creator preserves incomplete images and resumes completed stages. It uses a 
 
 If host verification fails after first boot, rerun the same `create` command. For a matching incomplete, unregistered guest, Limulator preserves the previous stage record and reruns boot and verification while keeping restore and guest installation complete. It refuses this recovery while another process owns the disk. Use `start` for a guest that is already registered.
 
-An interrupted dyld-cache patch needs an integrity check before repair. With the guest stopped and its System volume mounted read-only, run `uv run tools/audit_dyld_cache.py /path/to/dyld_shared_cache_arm64e_x1`. The tool checks SHA-256 code-page slots in the main cache and its declared subcaches, reports coverage and mismatches as JSON, and fails on unsupported or incomplete input. It records the unsigned `.atlas` metadata separately. It does not validate CMS trust, certify original instructions, or change cache bytes. A successful page audit alone does not establish app compatibility.
+Linux dyld-cache patching stages the selected cache family and undo log locally before publishing changed files. Publication updates one file at a time. An interrupted publication retains its before and after copies and a `.vphone-dsc-pending.json` journal in the VM bundle. While that journal exists, `start`, CFW retries, and `--fresh-disk` refuse to proceed. Preserve the disk, journal, and recovery directory named in the error; removing the journal does not repair a partial update. Recovery staging needs persistent storage. Filesystem sync cannot preserve a stage stored on tmpfs across a reboot.
+
+An interrupted dyld-cache patch needs an integrity check before repair. With the guest stopped and its System volume mounted read-only, run `uv run tools/audit_dyld_cache.py /path/to/dyld_shared_cache_arm64e_x1`. The tool checks SHA-256 code-page slots in the main cache and its declared subcaches, reports coverage and mismatches as JSON, and fails on unsupported or incomplete input. It records the unsigned `.atlas` metadata separately. It does not validate CMS trust, certify original instructions, or change cache bytes. A successful page audit alone does not resolve a pending publication or establish app compatibility.
 
 If an interrupted restore leaves partial APFS media and a later attempt reports `newfs_apfs: /dev/disk1 is already a synthesized APFS device: Resource busy`, the explicit recovery option is:
 

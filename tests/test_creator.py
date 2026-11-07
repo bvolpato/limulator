@@ -1070,6 +1070,31 @@ def test_fresh_disk_requires_matching_incomplete_receipt(catalog, mismatch):
     assert not list(candidate.vm_path.glob("preserved-disk-*"))
 
 
+@pytest.mark.parametrize("journal_kind", ["file", "dangling-symlink"])
+def test_fresh_disk_preserves_pending_cache_publication(catalog, journal_kind):
+    candidate, receipt = _incomplete_vm(catalog)
+    pending = candidate.vm_path / ".vphone-dsc-pending.json"
+    if journal_kind == "file":
+        pending.write_text('{"stage":"retained"}')
+    else:
+        pending.symlink_to("missing-recovery-stage")
+    disk = candidate.vm_path / "Disk.img"
+    original, inode = disk.read_bytes(), disk.stat().st_ino
+    before = pending.lstat()
+    with pytest.raises(ValueError, match="unresolved cache publication"):
+        creator._fresh_disk_allowed(catalog, candidate, receipt)
+    assert disk.read_bytes() == original
+    assert disk.stat().st_ino == inode
+    after = pending.lstat()
+    assert (after.st_ino, after.st_mode, after.st_mtime_ns, after.st_ctime_ns) == (
+        before.st_ino,
+        before.st_mode,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    assert not list(candidate.vm_path.glob("preserved-disk-*"))
+
+
 def test_fresh_disk_refuses_registered_device_before_restore(catalog):
     device = _registered_device(catalog, "duo", "iphone-duo", 41)
     original = (device.vm_path / "Disk.img").read_bytes()

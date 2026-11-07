@@ -132,6 +132,16 @@
       "path": "patches/0014-qemu-exact-generic-timer.patch",
       "sha256": "ed5a9afdbe22bf27a6cb87c06632b110c4188e49aa795f0faacc1da8ab3da81c",
       "target": "qemu"
+    },
+    {
+      "path": "patches/0015-linux-stage-dyld-cache.patch",
+      "sha256": "74cf73e33d73fec0a65b6ad79bd6051f47b1b62ab63730cfcd4d95a7f5f798a4",
+      "target": "backend"
+    },
+    {
+      "path": "patches/0016-linux-release-cli-selection.patch",
+      "sha256": "2deebc13d02cab651b429c2186bbafa3934758ca716dce0e05e137dfa0da50b0",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -35,6 +36,7 @@ from .lifecycle import (
     _lock_disk,
     _private_directory,
     _read_json,
+    _require_cache_publication_complete,
     _resource_guard,
     _validate_name,
 )
@@ -68,7 +70,10 @@ def _native_env(paths: Paths) -> dict[str, str]:
         VSETUP_RELEASE=str(paths.data / "releases/vphone"),
         VPHONE_RCODESIGN=str(paths.prefix / "bin/rcodesign"),
         VPHONE_APFS_KO=str(paths.backend / ".build/linux-apfs-rw/apfs.ko"),
-        VC=str(paths.backend / "linux-create/vphone-cli"),
+        VC=str(
+            paths.backend
+            / f"linux-create/.build/out/out/Products/Release-linux-{platform.machine()}/vphone-cli"
+        ),
         QEMU=str(paths.backend / "qemu/build/qemu-system-aarch64"),
         GFX="1",
         WINDOW="0",
@@ -309,6 +314,12 @@ def _fresh_disk_allowed(paths: Paths, candidate: Device, receipt: dict | None) -
             raise ValueError("fresh disk recovery is unavailable for a registered device")
     if not receipt or receipt.get("specification") != _creation_specification(candidate):
         raise ValueError("fresh disk recovery requires a matching incomplete creation receipt")
+    pending = candidate.vm_path / ".vphone-dsc-pending.json"
+    if pending.exists() or pending.is_symlink():
+        raise ValueError(
+            "fresh disk recovery refuses an unresolved cache publication; preserve and inspect "
+            f"the disk and recovery stage recorded by {pending}"
+        )
     completed = _completed(candidate.vm_path)
     if (
         receipt.get("state") in ("created", "ready")
@@ -1134,6 +1145,7 @@ def _pipeline(
     fresh_disk: bool = False,
 ) -> dict:
     vm = candidate.vm_path
+    _require_cache_publication_complete(vm)
     specification = _creation_specification(candidate)
     state_path = vm / ".limulator-create.json"
     old = _read_json(state_path)
@@ -1225,6 +1237,7 @@ def _pipeline(
                 stream.write("bundle\n")
         candidate.validate_vm()
         disk_fd = _lock_disk(vm / "Disk.img")
+        _require_cache_publication_complete(vm)
         resumed = _resume_completed_boot(paths, candidate, old, run_dir, disk_fd)
         if resumed is not None:
             state.update(verification_resume=resumed, completed=_completed(vm), stage="booted")

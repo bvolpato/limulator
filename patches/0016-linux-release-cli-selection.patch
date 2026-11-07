@@ -1,0 +1,181 @@
+diff --git a/docs/CREATE-ON-LINUX.md b/docs/CREATE-ON-LINUX.md
+index 40cd306e3f278118bf3c1b42950934fc1fc1c8e7..992a53240dd5d626b06b2b6c04f405a4457f8000 100644
+--- a/docs/CREATE-ON-LINUX.md
++++ b/docs/CREATE-ON-LINUX.md
+@@ -34,7 +34,7 @@ The steps:
+ Everything below uses `vms/` as the library and `myphone` as the VM. `VC` is the Linux vphone-cli:
+ 
+ ```sh
+-VC=$PWD/linux-create/.build/out/out/Products/Debug-linux-x86_64/vphone-cli
++VC=$PWD/linux-create/.build/out/out/Products/Release-linux-$(uname -m)/vphone-cli
+ ```
+ 
+ ## 1. Make an empty VM bundle
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 2392a2986637b6fff6a3866a9b63043195b91097..98fce0f160d06c20617b8c52f18a60e2e84a6924 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -176,7 +176,8 @@ linux-create/build.sh      # fetches vphone-cli, installs Swift if needed, syncs
+ linux-create/vphone-cli --help
+ ```
+ 
+-`linux-create/vphone-cli` runs the built tool (it builds it first if needed); use it as
++`linux-create/vphone-cli` runs the built Release tool; run `linux-create/build.sh` first if it is
++missing. The wrapper does not build or install Swift when invoked. Use it as
+ `sudo linux-create/vphone-cli ...` for the steps that need root.
+ 
+ **vphone-cli's release files.** Download
+diff --git a/linux-create/README.md b/linux-create/README.md
+index a4ecf03005060b2fc3add9a594bf245e318ff22e..17f364e0e577f1789ab3028da2d6d9d7a21bb6b0 100644
+--- a/linux-create/README.md
++++ b/linux-create/README.md
+@@ -16,16 +16,17 @@ files listed in `excludes/`, plus:
+ - `Vendor/Img4tool/`: libimg4-spm 0.1.1 (the version vphone-cli pins) adapted for Linux; see its README.
+ 
+ ```sh
+-./build.sh                 # clone vphone-cli, install Swift if missing, sync-sources, swift build
+-./vphone-cli fw prepare …  # run it (builds first when needed); sudo ./vphone-cli … for root steps
+-# the binary: .build/out/out/Products/Debug-linux-x86_64/vphone-cli
++./build.sh                 # clone vphone-cli, install Swift if missing, sync-sources, build Release
++./vphone-cli fw prepare …  # run the built Release tool; sudo ./vphone-cli … for root steps
++# the binary: .build/out/out/Products/Release-linux-x86_64/vphone-cli
+ ```
+ 
+ `build.sh` uses the Swift version in `.swift-version` (6.4.1). If it's missing, the script installs it
+ with swiftly (Arch and other unsupported distros use swiftly's `ubi9` platform) and runs it by its full
+ path, so you don't need to source swiftly's `env.sh` and its `clang`/`lld` stay off your PATH. Extra
+-arguments go to `swift build` (for example `./build.sh -c release`). `VPHONE_CLI=DIR` builds against an
+-existing vphone-cli checkout.
++arguments go to `swift build`; use `./build.sh -c debug` to build the Debug product explicitly.
++`VPHONE_CLI=DIR` builds against an existing vphone-cli checkout. The wrapper does not build or install
++Swift when the Release product is missing; run `./build.sh --configuration release` first.
+ 
+ Re-run `build.sh` after changing anything in `overlay/`, `edits/` or `excludes/`, or after moving
+ the vphone-cli checkout to another tag.
+diff --git a/linux-create/build.sh b/linux-create/build.sh
+index 43acac04d23970585e16b09fea56344e47dd515e..0500eed6ffc6a6dbd575335927674b234559d844 100755
+--- a/linux-create/build.sh
++++ b/linux-create/build.sh
+@@ -2,7 +2,7 @@
+ # Build vphone-cli's firmware tooling for Linux in one step: fetch the pinned
+ # vphone-cli tag, sync its sources, install Swift if needed, and build.
+ #
+-#   linux-create/build.sh            # -> linux-create/vphone-cli (wrapper) works
++#   linux-create/build.sh            # -> Release product used by linux-create/vphone-cli
+ #
+ # Needs no swiftly env/PATH setup: the pinned toolchain (.swift-version) is
+ # installed with swiftly if missing and called by its full path.
+@@ -51,5 +51,30 @@ log "Building with Swift $VPHONE_SWIFT_VERSION ($(swift_bin))"
+ ld_flags=()
+ lld=${VPHONE_SWIFT_LLD:-$([ "$(distro_family)" = arch ] && echo 1 || echo 0)}
+ [ "$lld" = 1 ] && ld_flags=(-Xswiftc -use-ld=lld -Xlinker -z -Xlinker nostart-stop-gc)
+-swift build --build-system swiftbuild --scratch-path .build/out "${ld_flags[@]}" "$@"
+-log "Built: $here/.build/out/out/Products/Debug-linux-$(uname -m)/vphone-cli  (or run linux-create/vphone-cli)"
++build_args=("$@")
++configuration=release
++has_configuration=0
++for ((i = 0; i < ${#build_args[@]}; i++)); do
++  case ${build_args[i]} in
++    --configuration|-c)
++      ((i + 1 < ${#build_args[@]})) || die "missing value for ${build_args[i]}"
++      configuration=${build_args[i + 1]}
++      has_configuration=1
++      i=$((i + 1))
++      ;;
++    --configuration=*|-c=*)
++      configuration=${build_args[i]#*=}
++      has_configuration=1
++      ;;
++  esac
++done
++case $configuration in
++  debug) configuration_name=Debug ;;
++  release) configuration_name=Release ;;
++  *) die "configuration must be debug or release: $configuration" ;;
++esac
++if [ "$has_configuration" = 0 ]; then
++  build_args+=(--configuration release)
++fi
++swift build --build-system swiftbuild --scratch-path .build/out "${ld_flags[@]}" "${build_args[@]}"
++log "Built: $here/.build/out/out/Products/$configuration_name-linux-$(uname -m)/vphone-cli  (or run linux-create/vphone-cli)"
+diff --git a/linux-create/vphone-cli b/linux-create/vphone-cli
+index ce83350e2d1881d152a566c732436dbde6642337..aee5e147e880773e507ded71ea1758f0e3ee1f61 100755
+--- a/linux-create/vphone-cli
++++ b/linux-create/vphone-cli
+@@ -1,17 +1,14 @@
+ #!/usr/bin/env bash
+-# Run the Linux build of vphone-cli without remembering its build path:
++# Run the Release build of vphone-cli without remembering its build path:
+ #
+ #   linux-create/vphone-cli fw prepare ...
+ #   sudo linux-create/vphone-cli cfw install ...
+-#
+-# Builds it first (as your user) when it has not been built yet.
+ set -Eeuo pipefail
+ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+-bin=$here/.build/out/out/Products/Debug-linux-$(uname -m)/vphone-cli
++bin=$here/.build/out/out/Products/Release-linux-$(uname -m)/vphone-cli
+ if [ ! -x "$bin" ]; then
+-  if [ "$(id -u)" = 0 ]; then
+-    echo "vphone-cli is not built yet; run $here/build.sh as your user first" >&2; exit 1
+-  fi
+-  "$here/build.sh" >&2
++  echo "Release vphone-cli is not built: $bin" >&2
++  echo "From the Limulator checkout, run: uv run limulator bootstrap cli" >&2
++  exit 127
+ fi
+ exec "$bin" "$@"
+diff --git a/setup/create-vm.sh b/setup/create-vm.sh
+index 4c8a2c8d5665ba95e1bec8ace59d94e47a7bacc9..eb0dc25e3be2a4fcdf05d6bb1e4430919ed04aa8 100755
+--- a/setup/create-vm.sh
++++ b/setup/create-vm.sh
+@@ -138,7 +138,7 @@ log "iOS:     $IOS (build $PAIR_BUILD)   cloudOS: $PAIR_CLOUDOS   preset: $PAIR_
+ log "VM:      $VM   (scale ${SCALE}x, vsock CID $CID)"
+ [ "$DRY" = 1 ] && log "DRY RUN: nothing below executes."
+ 
+-VC=$VSETUP_SRC/linux-create/.build/out/out/Products/Debug-linux-x86_64/vphone-cli
++export VC=${VC:-$VSETUP_SRC/linux-create/.build/out/out/Products/Release-linux-$(uname -m)/vphone-cli}
+ QEMU_RUN=$VSETUP_SRC/run-vphone.sh
+ T=$VSETUP_SRC/tools
+ ECID=$(cat "$VM/ecid" 2>/dev/null || echo 0x0)
+diff --git a/tools/auto-lock-never.py b/tools/auto-lock-never.py
+index e0bc54220cf84bff22387935aac6b52ce0d5ec7b..8483070dc3d2f5417a112760a1ef3dbe04aa1185 100755
+--- a/tools/auto-lock-never.py
++++ b/tools/auto-lock-never.py
+@@ -16,7 +16,9 @@ import base64, hashlib, json, os, plistlib, shutil, socket, subprocess, sys, tem
+ 
+ NEVER = 2**31 - 1
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+-VC = os.environ.get("VC", f"{ROOT}/linux-create/.build/out/out/Products/Debug-linux-x86_64/vphone-cli")
++VC = os.environ.get(
++    "VC", f"{ROOT}/linux-create/.build/out/out/Products/Release-linux-{os.uname().machine}/vphone-cli"
++)
+ ENTITLEMENTS = {"com.apple.managedconfiguration.profiled-access": True,
+                 "com.apple.managedconfiguration.profiled.set": True}
+ SCRIPT = f"""
+diff --git a/tools/gpu-driver-from-cloudos.sh b/tools/gpu-driver-from-cloudos.sh
+index bd59bc5bf360967ab95266e117cb7259f084c66c..44a4f9c46374fc729ff85e1413df8f5270ed1722 100755
+--- a/tools/gpu-driver-from-cloudos.sh
++++ b/tools/gpu-driver-from-cloudos.sh
+@@ -18,7 +18,7 @@ set -euo pipefail
+ cd "$(dirname "$0")/.."
+ IPSW=$(realpath "${1:?usage: gpu-driver-from-cloudos.sh <cloudOS.ipsw> <out-dir>}")
+ OUT=${2:?usage: gpu-driver-from-cloudos.sh <cloudOS.ipsw> <out-dir>}
+-VC=${VC:-$PWD/linux-create/.build/out/out/Products/Debug-linux-x86_64/vphone-cli}
++VC=${VC:-$PWD/linux-create/.build/out/out/Products/Release-linux-$(uname -m)/vphone-cli}
+ NAME=gpu-recovery-$$
+ VM=vms/$NAME
+ RUN=runs/$NAME
+diff --git a/tools/restore-tree-mode.sh b/tools/restore-tree-mode.sh
+index 10b9a7afc7ea48b05b681154fa01b6bf65d656c3..7fed3b532e151df2ad31dfc5ec7130b274b16ba0 100755
+--- a/tools/restore-tree-mode.sh
++++ b/tools/restore-tree-mode.sh
+@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
+ LIB=${1:?usage: restore-tree-mode.sh <library> <vm> ssh|full}
+ VM=${2:?usage: restore-tree-mode.sh <library> <vm> ssh|full}
+ MODE=${3:?usage: restore-tree-mode.sh <library> <vm> ssh|full}
+-VC=${VC:-$PWD/linux-create/.build/out/out/Products/Debug-linux-x86_64/vphone-cli}
++VC=${VC:-$PWD/linux-create/.build/out/out/Products/Release-linux-$(uname -m)/vphone-cli}
+ SSHRD=${SSHRD:-$PWD/runs/sshramdisk/out/094-39914-031.dmg}
+ SSHROOT=${SSHROOT:-$PWD/runs/sshramdisk/ssh-root}
+ STOCK_RTSC=${STOCK_RTSC:-$PWD/runs/sshramdisk/stock-094-39914-031.dmg.trustcache}

@@ -140,6 +140,15 @@ def _private_directory(path: Path) -> None:
     path.chmod(0o700)
 
 
+def _require_cache_publication_complete(vm: Path) -> None:
+    journal = vm / ".vphone-dsc-pending.json"
+    try:
+        journal.lstat()
+    except FileNotFoundError:
+        return
+    raise RuntimeError(f"refusing boot with an unresolved dyld cache publication journal: {journal}")
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".json-", dir=path.parent)
     try:
@@ -371,6 +380,7 @@ class Runtime:
     def start(self, window: bool = False, wait_timeout: float = 0) -> dict[str, Any]:
         if not math.isfinite(wait_timeout) or wait_timeout < 0:
             raise ValueError("wait_timeout must be finite and nonnegative")
+        _require_cache_publication_complete(self.device.vm_path)
         self.device.validate_vm()
         _private_directory(self.runtime_path.parent)
         with (self.runtime_path.parent / ".start.lock").open("a") as guard:
@@ -383,6 +393,7 @@ class Runtime:
             _resource_guard()
             fd = _lock_disk(self.device.vm_path / "Disk.img")
             try:
+                _require_cache_publication_complete(self.device.vm_path)
                 run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=self.runtime_path.parent))
                 if any(char in os.fspath(run_dir) for char in (",", "\n", "\r")):
                     raise RuntimeError(
@@ -556,6 +567,7 @@ def _supervise(args: argparse.Namespace) -> int:
     ]
     process = None
     try:
+        _require_cache_publication_complete(device.vm_path)
         with (run_dir / "qemu.log").open("ab", buffering=0) as log:
             process = subprocess.Popen(
                 command,

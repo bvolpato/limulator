@@ -163,7 +163,7 @@ build_cli() {
   fetch_checkout "$src" "$(jq -er .vphone_cli.repository "$lock")" "$(jq -er .vphone_cli.revision "$lock")"
   uv run --script "$here/apply_backend_patches.py" --lock "$lock" --backend "$LIMULATOR_BACKEND"
   contained env VPHONE_CLI="$src" "$LIMULATOR_BACKEND/linux-create/build.sh" \
-    --jobs "$LIMULATOR_JOBS" -Xcc "-I$LIMULATOR_PREFIX/include" \
+    --configuration release --jobs "$LIMULATOR_JOBS" -Xcc "-I$LIMULATOR_PREFIX/include" \
     -Xlinker "-L$LIMULATOR_PREFIX/lib" -Xlinker -rpath -Xlinker "$LIMULATOR_PREFIX/lib"
 }
 build_usbmuxd() { "$LIMULATOR_BACKEND/tools/build-usbmuxd-32k.sh"; }

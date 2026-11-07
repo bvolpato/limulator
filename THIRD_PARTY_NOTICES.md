@@ -6,11 +6,11 @@ Repositories, revisions, patch targets, and patch hashes are recorded in [third_
 
 ## vphone-linux
 
-The backend launcher, tools, and Linux build/edit rules modified by patches 0001–0005, 0007, 0009, 0010, 0012, and 0013 come from [vphone-linux at c2dc1996c8398ddb994288a29a719360f354d268](https://github.com/YahiaAngelo/vphone-linux/tree/c2dc1996c8398ddb994288a29a719360f354d268).
+The backend launcher, tools, and Linux build/edit rules modified by patches 0001–0005, 0007, 0009, 0010, 0012, 0013, 0015, and 0016 come from [vphone-linux at c2dc1996c8398ddb994288a29a719360f354d268](https://github.com/YahiaAngelo/vphone-linux/tree/c2dc1996c8398ddb994288a29a719360f354d268).
 
 Its notice is `Copyright (c) 2026 Yahia`, under the MIT License. The complete notice, permission text, disclaimer, and repository-scope statement are retained in [LICENSES/vphone-linux-MIT.txt](LICENSES/vphone-linux-MIT.txt), copied from the [pinned LICENSE](https://github.com/YahiaAngelo/vphone-linux/blob/c2dc1996c8398ddb994288a29a719360f354d268/LICENSE).
 
-Patch 0005 also modifies bundled libirecovery code through an edit rule; that source's separate notice is recorded below. Patch 0009's edit rule changes vphone-cli's guest-device definition, whose project notice is also recorded below.
+Patch 0005 also modifies bundled libirecovery code through an edit rule; that source's separate notice is recorded below. Patches 0009 and 0015 include edit rules for vphone-cli, whose project notice is also recorded below.
 
 ## vphone-cli
 
@@ -20,6 +20,8 @@ Patch 0011 modifies the dyld-cache chunk reader and X1 planner from [vphone-cli 
 - [DyldSharedCacheArm64eX1BootstrapPatcher.swift](https://github.com/Lakr233/vphone-cli/blob/83197152137ddd2aad70eb121d6b88a9afbee36e/VPhoneExecutable/VPhoneCommand/FirmwarePatcher/DyldSharedCache/Patchers/DyldSharedCacheArm64eX1BootstrapPatcher.swift)
 
 The project notice is `Copyright (c) 2026 @Lakr233`, under the MIT License. The complete text is retained in [LICENSES/vphone-cli-MIT.txt](LICENSES/vphone-cli-MIT.txt), copied from the [pinned LICENSE](https://github.com/Lakr233/vphone-cli/blob/83197152137ddd2aad70eb121d6b88a9afbee36e/LICENSE).
+
+Patch 0015 also updates the Linux overlays and edit rules for the pinned vphone-cli installer, confined filesystem helpers, and package tests. The new staging and audit implementation preserves that project notice and the vphone-linux MIT notice above.
 
 ## QEMU patches
 
