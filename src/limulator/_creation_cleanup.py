@@ -103,6 +103,17 @@ def _cfw_target(target: str) -> bool:
     return re.fullmatch(r"/var/tmp/vphone-cfw\.[A-Za-z0-9]{8}/(?:system|xart|preboot)", target) is not None
 
 
+def _cfw_install_client(identity: dict) -> bool:
+    argv = identity["argv"]
+    return (
+        identity["uid"] == 0
+        and Path(identity["exe"]).name == "vphone-cli"
+        and len(argv) >= 3
+        and Path(argv[0]).name == "vphone-cli"
+        and argv[1:3] == ["cfw", "install"]
+    )
+
+
 def _unit_properties(unit: str, uid: int) -> dict[str, str]:
     try:
         username = pwd.getpwuid(uid).pw_name
@@ -187,6 +198,49 @@ def _inactive_scope_is_empty(
             f"inactive creation scope has residual resources: processes={identities}; mounts={remaining_mounts}"
         )
     return True
+
+
+def _wait_for_identity_exit(identity: dict, fd: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        current = _identity(identity["pid"])
+        if current is None:
+            return True
+        if current != identity:
+            raise RuntimeError(f"creation process identity changed while waiting for exit: {identity}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        select.select([fd], [], [], min(0.1, remaining))
+
+
+def _stop_cfw_install_client(
+    identity: dict,
+    fd: int,
+    unit: str,
+    uid: int,
+    group: str,
+    expected_invocation_id: str | None,
+    scope_owned: bool,
+) -> None:
+    current = _identity(identity["pid"])
+    if current is None:
+        return
+    if current != identity:
+        raise RuntimeError(f"creation CFW client identity changed before TERM: {identity}")
+    _require_active_invocation(_unit_properties(unit, uid), group, expected_invocation_id, scope_owned)
+    _signal(fd, signal.SIGTERM)
+    if _wait_for_identity_exit(identity, fd, 5):
+        return
+    current = _identity(identity["pid"])
+    if current is None:
+        return
+    if current != identity:
+        raise RuntimeError(f"creation CFW client identity changed before KILL: {identity}")
+    _require_active_invocation(_unit_properties(unit, uid), group, expected_invocation_id, scope_owned)
+    _signal(fd, signal.SIGKILL)
+    if not _wait_for_identity_exit(identity, fd, 5):
+        raise RuntimeError(f"creation CFW client survived TERM/KILL: {identity}")
 
 
 def cleanup(
@@ -288,6 +342,13 @@ def cleanup(
         unknown = [m for m in candidates if m not in [row[0] for row in owned_mounts]]
         if unknown:
             raise RuntimeError(f"creation mount ownership could not be proven: {unknown}")
+        cfw_clients = [(identity, fd) for identity, fd in pinned if _cfw_install_client(identity)]
+        if len(cfw_clients) > 1:
+            raise RuntimeError(f"multiple creation CFW install clients are active: {cfw_clients}")
+        if cfw_clients:
+            client, fd = cfw_clients[0]
+            _stop_cfw_install_client(client, fd, unit, uid, group, expected_invocation_id, scope_owned)
+        remaining_pinned = [(identity, fd) for identity, fd in pinned if not _cfw_install_client(identity)]
         for mount, identity, directory_fd, directory_identity in owned_mounts:
             current = Path(mount["target"]).parent.lstat()
             if (current.st_dev, current.st_ino) != directory_identity or _identity(
@@ -316,7 +377,7 @@ def cleanup(
             _require_active_invocation(
                 _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
             )
-            for identity, fd in pinned:
+            for identity, fd in remaining_pinned:
                 current = _identity(identity["pid"])
                 if current is None:
                     continue
@@ -349,7 +410,7 @@ def cleanup(
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                pending = [fd for identity, fd in pinned if _identity(identity["pid"]) is not None]
+                pending = [fd for identity, fd in remaining_pinned if _identity(identity["pid"]) is not None]
                 if pending:
                     select.select(pending, [], [], min(0.1, remaining))
                 else:

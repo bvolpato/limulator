@@ -1407,6 +1407,116 @@ def test_scope_cleanup_requires_exact_private_sshfs_before_unmount_and_pidfd_sig
         assert actions == []
 
 
+def test_scope_cleanup_stops_cfw_client_before_unmount_and_other_processes(
+    cleanup_scope, tmp_path, monkeypatch
+):
+    unit, boot, first_sshfs, alive, invocation_id = cleanup_scope
+    directory = tmp_path / "vphone-cfw.aabbccdd"
+    directory.mkdir(mode=0o700)
+    sources = ("/mnt1", "/mnt6", "/mnt2")
+    volumes = ("system", "xart", "preboot")
+    mounts = []
+    sshfs_processes = []
+    for index, (source, volume) in enumerate(zip(sources, volumes)):
+        target = str(directory / volume)
+        identity = first_sshfs if index == 0 else dict(first_sshfs, pid=4321 + index)
+        identity["exe"] = "/usr/bin/sshfs"
+        identity["argv"] = ["/usr/bin/sshfs", "-f", f"root@vphone:{source}", target]
+        alive[identity["pid"]] = identity
+        sshfs_processes.append(identity)
+        mounts.append(
+            {
+                "id": str(index + 1),
+                "target": target,
+                "source": f"root@vphone:{source}",
+                "type": "fuse.sshfs",
+                "record": f"mount {volume}",
+            }
+        )
+    client = dict(
+        first_sshfs,
+        pid=4444,
+        exe="/opt/vphone-cli",
+        argv=[
+            "/opt/vphone-cli",
+            "cfw",
+            "install",
+            "-l",
+            "/vms",
+            "Duo",
+            "--work-parent",
+            "/var/tmp",
+            "--keep-artifacts",
+        ],
+    )
+    alive[client["pid"]] = client
+    other = dict(
+        first_sshfs,
+        pid=5555,
+        uid=1000,
+        exe="/usr/bin/qemu-system-aarch64",
+        argv=["qemu-system-aarch64", "-name", "Duo"],
+    )
+    alive[other["pid"]] = other
+    attached = list(mounts)
+    monkeypatch.setattr(
+        _creation_cleanup, "_cfw_target", lambda value: value in {m["target"] for m in mounts}
+    )
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: list(attached))
+    fstat = os.fstat
+
+    def root_directory_metadata(fd):
+        info = fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            return info
+        metadata = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+        return SimpleNamespace(**(metadata | {"st_uid": 0}))
+
+    monkeypatch.setattr(_creation_cleanup.os, "fstat", root_directory_metadata)
+    pinned = {}
+    actions = []
+
+    def pin(pid):
+        fd = os.open("/dev/null", os.O_RDONLY)
+        pinned[fd] = pid
+        return fd
+
+    def signal_process(fd, value):
+        pid = pinned[fd]
+        if pid == client["pid"]:
+            actions.append(("client", value))
+        else:
+            actions.append(("scope", pid, value))
+        alive.pop(pid, None)
+
+    def unmount(command, **_kwargs):
+        target = command[-1]
+        if client["pid"] in alive:
+            actions.append(("busy", target))
+            return SimpleNamespace(returncode=1, stderr="Device or resource busy")
+        actions.append(("unmount", target))
+        attached[:] = [mount for mount in attached if mount["target"] != target]
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(_creation_cleanup, "_pidfd", pin)
+    monkeypatch.setattr(_creation_cleanup, "_signal", signal_process)
+    monkeypatch.setattr(_creation_cleanup.subprocess, "run", unmount)
+    _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id)
+
+    client_term = actions.index(("client", creator.signal.SIGTERM))
+    unmounts = [index for index, action in enumerate(actions) if action[0] == "unmount"]
+    remaining_terms = [
+        index
+        for index, action in enumerate(actions)
+        if action[0] == "scope" and action[2] == creator.signal.SIGTERM
+    ]
+    assert len(unmounts) == 3
+    assert len(remaining_terms) == len(sshfs_processes) + 1
+    assert client_term < min(unmounts) <= max(unmounts) < min(remaining_terms)
+    assert not any(action[0] == "busy" for action in actions)
+    assert attached == []
+
+
 def test_scope_cleanup_refuses_mount_without_an_owned_process(cleanup_scope, monkeypatch):
     unit, boot, _, alive, invocation_id = cleanup_scope
     alive.clear()
