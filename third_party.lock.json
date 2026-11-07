@@ -142,6 +142,11 @@
       "path": "patches/0016-linux-release-cli-selection.patch",
       "sha256": "2deebc13d02cab651b429c2186bbafa3934758ca716dce0e05e137dfa0da50b0",
       "target": "backend"
+    },
+    {
+      "path": "patches/0017-linux-require-guest-receipt.patch",
+      "sha256": "66adc17e6552f88e987cc747dd7faec6d4595578d8f7e556f40355569cd148af",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

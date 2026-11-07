@@ -1,0 +1,97 @@
+diff --git a/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift b/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift
+index f8ddf0b..2ba37e2 100644
+--- a/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift
++++ b/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift
+@@ -5,6 +5,17 @@ import XCTest
+ @testable import VPhoneCoreKit
+ 
+ final class StagedDyldCacheTests: XCTestCase {
++    func testLaunchdBackupCannotProveUnreceiptedCachePatchesAreLive() throws {
++        XCTAssertEqual(try VPhoneStagedDyldCache.priorGuestPatches(
++            wasInstalled: false, receipt: nil,
++        ), [])
++        let recorded: Set<String> = ["dyld-boot-arm64e_x1_bootstrap"]
++        XCTAssertEqual(try VPhoneStagedDyldCache.priorGuestPatches(
++            wasInstalled: true, receipt: recorded,
++        ), recorded)
++        XCTAssertThrowsError(try VPhoneStagedDyldCache.priorGuestPatches(wasInstalled: true, receipt: nil))
++    }
++
+     final class Faults {
+         var write: ((Int32, UnsafeRawPointer, Int, off_t) -> Int)?
+         var sync: ((Int32) -> Int32)?
+diff --git a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
+index 364d4dc..b6c61ad 100644
+--- a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
++++ b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
+@@ -204,10 +204,12 @@ struct VPhoneCustomFirmwareInstaller {
+         // this VM's kernelcache, which decide the shared region size below.
+         var receiptKernel = receipt?.parts[VPhoneVirtualMachinePatchReceipt.part(for: .firmware(.kernelcache))]
+             .map { Set($0.patches) }
++        #if !os(Linux)
+         let guestTargets = FirmwareGuestPatchResolution.guestTargetIdentifiers
+         let effectiveEnabled = Set(plan?.enabledPatches ?? [])
+         let priorFallback = Set(rawPlan?.enabledPatches ?? []).intersection(guestTargets)
+             .union(Set(Self.lateGuestPatches).intersection(effectiveEnabled))
++        #endif
+ #if os(Linux)
+         // The VM is booted into the SSH ramdisk and its target volumes are
+         // mounted in the guest. The host reaches them over sshfs; the host
+@@ -224,7 +226,6 @@ struct VPhoneCustomFirmwareInstaller {
+                 receipt: receipt,
+                 receiptGuest: receiptGuest,
+                 receiptKernel: receiptKernel,
+-                priorFallback: priorFallback,
+                 invokingUser: invokingUser,
+                 callerUID: callerUID,
+             )
+diff --git a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
+index c983532..a218e5d 100644
+--- a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
++++ b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
+@@ -61,7 +61,6 @@ extension VPhoneCustomFirmwareInstaller {
+         receipt: VPhoneVirtualMachinePatchReceipt?,
+         receiptGuest: Set<String>?,
+         receiptKernel: Set<String>?,
+-        priorFallback: Set<String>,
+         invokingUser: VPhoneInvokingUser?,
+         callerUID: uid_t?,
+     ) throws {
+@@ -110,9 +109,11 @@ extension VPhoneCustomFirmwareInstaller {
+         print("[+] system volume open")
+         let xartRoot = try work.directory.mountedVolume("xart")
+         print("[+] xart volume open")
+-        let wasInstalled = (try? systemRoot.exists("System/Library/xpc/launchd.plist.bak")) ?? false
++        let wasInstalled = try systemRoot.exists("System/Library/xpc/launchd.plist.bak")
+         print("[*] wasInstalled=\(wasInstalled), mode=\(mode)")
+-        let priorGuest = receiptGuest ?? (wasInstalled ? priorFallback : [])
++        let priorGuest = try VPhoneStagedDyldCache.priorGuestPatches(
++            wasInstalled: wasInstalled, receipt: receiptGuest,
++        )
+         let device = configuredGuestDevice(in: bundleDirectory) ?? guestDevice(of: restore)
+         var liveGuest = Set<String>()
+         switch mode {
+diff --git a/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift b/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift
+index 1b73099..88bcd32 100644
+--- a/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift
++++ b/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift
+@@ -9,6 +9,19 @@ public final class VPhoneStagedDyldCache {
+     public static let undoName = ".vphone-dsc-undo.json"
+     public static let pendingName = ".vphone-dsc-pending.json"
+ 
++    /// A launchd backup proves earlier mutation, not completed publication.
++    public static func priorGuestPatches(
++        wasInstalled: Bool, receipt: Set<String>?
++    ) throws -> Set<String> {
++        guard !wasInstalled || receipt != nil else {
++            throw Failure(
++                "Unresolved or legacy CFW state: launchd.plist.bak exists but no valid Guest patch receipt was found. "
++                    + "Preserve the VM disk and retained CFW artifacts for manual inspection; automatic recovery is unavailable."
++            )
++        }
++        return receipt ?? []
++    }
++
+     public struct Failure: Error, CustomStringConvertible {
+         public let description: String
+         init(_ message: String) { description = message }
