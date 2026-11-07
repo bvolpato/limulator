@@ -22,6 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
+from . import _creation_cleanup
 from .lifecycle import (
     Device,
     Paths,
@@ -524,6 +525,20 @@ def _vhci_ports() -> dict[int, str]:
     return ports
 
 
+def _usbip_connections() -> set[tuple[str, str, str, int]]:
+    namespace = os.readlink("/proc/self/ns/net")
+    connections = set()
+    for line in Path("/proc/net/tcp").read_text().splitlines()[1:]:
+        fields = line.split()
+        if fields[2] != "0100007F:0CA8" or fields[3] != "01" or not fields[1].startswith("0100007F:"):
+            continue
+        inode = int(fields[9])
+        if inode == 0:
+            raise RuntimeError("USB/IP restore connection has no kernel socket inode")
+        connections.add((namespace, fields[1], fields[2], inode))
+    return connections
+
+
 def _listener_pids(port=3240) -> list[int]:
     inodes = set()
     for line in Path("/proc/net/tcp").read_text().splitlines()[1:]:
@@ -582,12 +597,33 @@ def _signal_owned(identity: dict, value: int) -> bool:
         os.close(fd)
 
 
+def _cleanup_creation_scope(
+    unit: str, env: dict[str, str], owner: dict, baseline: list[dict], *, scope_owned: bool
+) -> None:
+    _sudo(
+        ["/usr/bin/python3", Path(_creation_cleanup.__file__).resolve()],
+        env,
+        input=json.dumps(
+            {
+                "unit": unit,
+                "uid": os.getuid(),
+                "boot_id": owner["boot_id"],
+                "baseline": baseline,
+                "scope_owned": scope_owned,
+            }
+        ),
+        timeout=60,
+    )
+
+
 class _USBHelpers:
     def __init__(self, paths: Paths, directory: Path, env: dict[str, str], unit: str):
         self.paths, self.directory, self.env, self.unit = paths, directory, env, unit
         self.rule = Path(f"/run/udev/rules.d/99-limulator-{os.getuid()}-{uuid.uuid4().hex[:8]}.rules")
         self.daemon = None
         self.owned_ports: set[int] = set()
+        self.import_connections: dict[int, tuple[str, str, str, int]] = {}
+        self.import_unproven = False
         self.seen_devices: set[tuple[str, int, int]] = set()
         self.rule_created = False
         self.daemon_identity = None
@@ -655,6 +691,35 @@ class _USBHelpers:
             time.sleep(0.1)
         self.env["LIMULATOR_CREATOR_USB_READY"] = "1"
 
+    def _owned_import(self, port: int) -> bool:
+        expected = self.import_connections.get(port)
+        if expected is None:
+            raise RuntimeError(f"USB/IP port {port} has no recorded import connection identity")
+        deadline = time.monotonic() + 5
+        while True:
+            ports = _vhci_ports()
+            if port not in ports:
+                return False
+            if set(ports) != {port}:
+                raise RuntimeError(
+                    f"USB/IP port {port} connection attribution is ambiguous: active ports {sorted(ports)}"
+                )
+            connections = _usbip_connections()
+            if connections == {expected}:
+                current = _vhci_ports()
+                if port not in current:
+                    return False
+                if set(current) == {port} and _usbip_connections() == connections:
+                    return True
+                raise RuntimeError(f"USB/IP port {port} changed during import connection verification")
+            if connections or time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"USB/IP port {port} import connection identity changed or is unproven: "
+                    f"expected={expected}; current={sorted(connections)}"
+                )
+            # Kernel shutdown releases the TCP socket before it clears the VHCI port.
+            time.sleep(0.05)
+
     def poll(self):
         if not _identity_alive(self.daemon_identity):
             raise RuntimeError("task-owned usbmuxd exited during creation")
@@ -663,19 +728,32 @@ class _USBHelpers:
             raise RuntimeError(
                 "a physical Apple device appeared during restore; preserving it and stopping this creation"
             )
+        ports = _vhci_ports()
+        foreign = set(ports) - self.owned_ports
+        if foreign:
+            raise RuntimeError(f"unowned USB/IP imports appeared during creation: {sorted(foreign)}")
+        for port in ports:
+            self._owned_import(port)
+        ports = _vhci_ports()
+        self.owned_ports.intersection_update(ports)
+        self.import_connections = {
+            port: value for port, value in self.import_connections.items() if port in ports
+        }
         owners = _listener_pids()
         if not owners:
             return
         if any(not _in_scope(pid, self.unit) for pid in owners):
             raise RuntimeError("USB/IP listener does not belong to this creation's exact systemd scope")
-        ports = _vhci_ports()
-        foreign = set(ports) - self.owned_ports
-        if foreign:
-            raise RuntimeError(f"unowned USB/IP imports appeared during creation: {sorted(foreign)}")
         if not ports:
             remote = _run(["usbip", "list", "-r", "127.0.0.1"], env=self.env, check=False, timeout=5)
             if not re.search(r"^\s*1-1:.*\(05ac:[0-9a-f]{4}\)", remote.stdout, re.MULTILINE | re.IGNORECASE):
                 return
+            if _vhci_ports() or _usbip_connections():
+                raise RuntimeError("USB/IP controller or restore connection changed before owned attach")
+            owners = _listener_pids()
+            if not owners or any(not _in_scope(pid, self.unit) for pid in owners):
+                raise RuntimeError("USB/IP listener ownership changed before owned attach")
+            self.import_unproven = True
             attached = _sudo(
                 ["usbip", "attach", "-r", "127.0.0.1", "-b", "1-1"], self.env, check=False, timeout=10
             )
@@ -695,8 +773,22 @@ class _USBHelpers:
             if len(current) != 1:
                 raise RuntimeError("could not identify this task's newly imported virtual USB port")
             self.owned_ports.update(current)
+            owners = _listener_pids()
+            if not owners or any(not _in_scope(pid, self.unit) for pid in owners):
+                raise RuntimeError("USB/IP listener ownership changed during owned attach")
+            connections = _usbip_connections()
+            if len(connections) != 1:
+                raise RuntimeError(
+                    f"could not identify the owned import's unique TCP connection: {sorted(connections)}"
+                )
+            port = next(iter(current))
+            self.import_connections[port] = next(iter(connections))
+            self._owned_import(port)
+            self.import_unproven = False
             ports = current
-        for local in ports.values():
+        for port, local in ports.items():
+            if not self._owned_import(port):
+                continue
             if local == "0-0":
                 continue
             node = Path("/sys/bus/usb/devices") / local
@@ -714,15 +806,66 @@ class _USBHelpers:
                     self.seen_devices.add(key)
 
     def close(self):
-        if self.daemon is not None and _identity_alive(self.daemon_identity):
-            _signal_owned(self.daemon_identity, signal.SIGTERM)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                self.daemon.wait(timeout=10)
-        for port in self.owned_ports & _vhci_ports().keys():
-            _sudo(["usbip", "detach", "-p", str(port)], self.env, check=False)
+        errors = []
+        if self.daemon is not None:
+            if self.daemon_identity is None and self.daemon.poll() is None:
+                errors.append(f"private usbmuxd has no validated identity: PID {self.daemon.pid}")
+            for value, timeout in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+                if not _identity_alive(self.daemon_identity):
+                    break
+                try:
+                    _signal_owned(self.daemon_identity, value)
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        self.daemon.wait(timeout=timeout)
+                except Exception as exc:
+                    errors.append(f"private usbmuxd {signal.Signals(value).name} failed: {exc}")
+            if _identity_alive(self.daemon_identity):
+                errors.append(f"private usbmuxd survived TERM/KILL: {self.daemon_identity}")
+        try:
+            current = _vhci_ports()
+            if self.import_unproven and current:
+                errors.append(f"USB/IP attach has unresolved import identity: active ports {sorted(current)}")
+            ports = self.owned_ports & current.keys()
+        except Exception as exc:
+            errors.append(f"owned USB/IP inventory failed: {exc}")
+            ports = set()
+        for port in sorted(ports):
+            try:
+                if not self._owned_import(port):
+                    continue
+                result = _sudo(["usbip", "detach", "-p", str(port)], self.env, check=False, timeout=10)
+                if result.returncode:
+                    errors.append(
+                        f"owned USB/IP port {port} detach exited {result.returncode}: {result.stderr.strip()}"
+                    )
+            except Exception as exc:
+                errors.append(f"owned USB/IP port {port} detach failed: {exc}")
+        try:
+            deadline = time.monotonic() + 5
+            remaining = self.owned_ports & _vhci_ports().keys()
+            while remaining and time.monotonic() < deadline:
+                time.sleep(0.1)
+                remaining = self.owned_ports & _vhci_ports().keys()
+            self.owned_ports.intersection_update(remaining)
+            self.import_connections = {
+                port: value for port, value in self.import_connections.items() if port in remaining
+            }
+            if remaining:
+                errors.append(f"owned USB/IP imports remain attached: {sorted(remaining)}")
+        except Exception as exc:
+            errors.append(f"owned USB/IP detach verification failed: {exc}")
         if self.rule_created:
-            _sudo(["rm", "--", self.rule], self.env)
-            _sudo(["udevadm", "control", "--reload"], self.env)
+            try:
+                _sudo(["rm", "--", self.rule], self.env)
+                self.rule_created = False
+            except Exception as exc:
+                errors.append(f"task udev rule removal failed for {self.rule}: {exc}")
+            try:
+                _sudo(["udevadm", "control", "--reload"], self.env)
+            except Exception as exc:
+                errors.append(f"task udev rule reload failed: {exc}")
+        if errors:
+            raise RuntimeError("private USB cleanup incomplete: " + "; ".join(errors))
 
 
 def _native_python_shim(bindir: Path) -> None:
@@ -868,9 +1011,7 @@ def _verify_migration_result(result: dict, expected_build: str) -> None:
     if not isinstance(actual_build, str) or not actual_build:
         raise RuntimeError("guest DMLastMigrationResults is missing a valid buildVersion")
     if actual_build != expected_build:
-        raise RuntimeError(
-            f"guest DataMigrator recorded build {actual_build!r}; expected {expected_build!r}"
-        )
+        raise RuntimeError(f"guest DataMigrator recorded build {actual_build!r}; expected {expected_build!r}")
 
 
 def _verify_guest_migration(
@@ -996,6 +1137,11 @@ def _pipeline(
     specification = _creation_specification(candidate)
     state_path = vm / ".limulator-create.json"
     old = _read_json(state_path)
+    if old and "cleanup_error" in old:
+        raise RuntimeError(
+            f"previous creation cleanup is unresolved for scope {old.get('scope', 'unknown')}; "
+            f"inspect {state_path}: {old['cleanup_error']}"
+        )
     previous_receipt = state_path.read_bytes() if fresh_disk and old else None
     if fresh_disk:
         _fresh_disk_allowed(paths, candidate, old)
@@ -1123,6 +1269,7 @@ def _pipeline(
         ]
         log_path = run_dir / "creation.log"
         state["log"] = str(log_path)
+        mount_baseline = _creation_cleanup.mounts()
         with log_path.open("ab", buffering=0) as log:
             process = subprocess.Popen(
                 command,
@@ -1189,8 +1336,6 @@ def _pipeline(
         _atomic_json(state_path, state)
         _stop_creation_guest(vm, candidate.cid, unit)
         _apply_profile_configuration(vm, profile, int(candidate.scale))
-        os.close(disk_fd)
-        disk_fd = None
         with (vm / "config.plist").open("rb") as stream:
             screen = plistlib.load(stream)["screenConfig"]
         width, height = map(int, (vm / "gfx-res").read_text().strip().split("x"))
@@ -1204,29 +1349,38 @@ def _pipeline(
             height,
             candidate.scale or screen["scale"],
         )
-        Registry(paths).register(device)
-        state.update(state="created", stage="owned-runtime-start")
-        _atomic_json(state_path, state)
     except BaseException as exc:
         state.update(state="error", error=str(exc), completed=_completed(vm))
         _atomic_json(state_path, state)
         raise
     finally:
-        if scope_owned:
-            _run(["systemctl", "--user", "kill", "--signal=SIGTERM", unit], check=False)
-            until = time.monotonic() + 15
-            while _disk_users(vm / "Disk.img") and time.monotonic() < until:
-                time.sleep(0.25)
-            if _disk_users(vm / "Disk.img"):
-                _run(["systemctl", "--user", "kill", "--signal=SIGKILL", unit], check=False)
-                until = time.monotonic() + 5
-                while _disk_users(vm / "Disk.img") and time.monotonic() < until:
-                    time.sleep(0.1)
+        cleanup_complete = False
+        cleanup_errors = []
         try:
-            helpers.close()
+            try:
+                if process is not None:
+                    _cleanup_creation_scope(
+                        unit, env, state["process"], mount_baseline, scope_owned=scope_owned
+                    )
+            except BaseException as exc:
+                cleanup_errors.append(("scope", exc))
+            try:
+                helpers.close()
+            except BaseException as exc:
+                cleanup_errors.append(("private USB", exc))
+            if cleanup_errors:
+                state.update(
+                    state="error",
+                    cleanup_error="; ".join(
+                        f"{label} cleanup failed: {exc}" for label, exc in cleanup_errors
+                    ),
+                )
+                _atomic_json(state_path, state)
+                raise cleanup_errors[0][1]
+            cleanup_complete = True
         finally:
             try:
-                if fresh_record is not None and previous_disk_fd is not None:
+                if cleanup_complete and fresh_record is not None and previous_disk_fd is not None:
                     _rollback_fresh_disk(vm, fresh_record, previous_disk_fd, disk_fd)
                     _atomic_json(state_path, state)
             finally:
@@ -1236,6 +1390,9 @@ def _pipeline(
                     os.close(disk_fd)
     runtime = Runtime(paths, device)
     try:
+        Registry(paths).register(device)
+        state.update(state="created", stage="owned-runtime-start")
+        _atomic_json(state_path, state)
         result = runtime.start(wait_timeout=600)
         if result["state"] != "running":
             raise RuntimeError(f"created guest did not reach its owned runtime API: {result}")

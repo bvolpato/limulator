@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from limulator import creator
+from limulator import _creation_cleanup, creator
 from limulator.lifecycle import Device, Paths, Registry
 from limulator.profiles import FirmwareDescriptor, get_profile, list_profiles
 
@@ -717,6 +717,339 @@ def test_prelaunch_failure_preserves_disk_and_rolls_back_explicit_recovery(catal
     os.close(released)
 
 
+@pytest.mark.parametrize("scope_owned", [False, True])
+@pytest.mark.parametrize("failure", ["scope", "private USB", "both"])
+def test_failed_creation_cleanup_blocks_recovery_even_when_disk_has_no_users(
+    catalog, monkeypatch, scope_owned, failure
+):
+    candidate, _ = _incomplete_vm(catalog)
+    vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
+    original = disk.read_bytes()
+    script = catalog.backend / "setup/create-vm.sh"
+    script.write_text("# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n")
+    monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
+    monkeypatch.setattr(creator, "_unit_states", lambda: {})
+    monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
+    monkeypatch.setattr(creator, "_disk_users", lambda *_: [])
+    monkeypatch.setattr(creator, "_in_scope", lambda *_: scope_owned)
+    monkeypatch.setattr(creator, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    closed = []
+    real_close = creator._USBHelpers.close
+    private_identity = {"pid": 4322, "start_ticks": 1234, "boot_id": "owned-boot"}
+
+    def wait(*, timeout):
+        raise subprocess.TimeoutExpired("private usbmuxd", timeout)
+
+    def start_helpers(self):
+        if failure == "private USB":
+            self.daemon_identity = private_identity
+            self.daemon = SimpleNamespace(wait=wait)
+
+    monkeypatch.setattr(creator._USBHelpers, "start", start_helpers)
+    if failure == "private USB":
+        monkeypatch.setattr(creator, "_identity_alive", lambda value: value == private_identity)
+        monkeypatch.setattr(creator, "_signal_owned", lambda *_: True)
+        monkeypatch.setattr(creator, "_vhci_ports", lambda: {})
+
+    def close_helpers(_self):
+        closed.append(True)
+        if failure == "private USB":
+            return real_close(_self)
+        if failure == "both":
+            raise RuntimeError("private USB helper remains active")
+
+    monkeypatch.setattr(creator._USBHelpers, "close", close_helpers)
+    monkeypatch.setattr(
+        creator._USBHelpers, "poll", lambda self: (_ for _ in ()).throw(RuntimeError("creation interrupted"))
+    )
+    monkeypatch.setattr(
+        creator.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: None),
+    )
+
+    def incomplete(*_args, **_kwargs):
+        if failure in ("scope", "both"):
+            raise RuntimeError("creation cleanup incomplete: PID 4321 /usr/bin/sshfs root@vphone:/mnt1")
+
+    monkeypatch.setattr(creator, "_cleanup_creation_scope", incomplete)
+    message = "usbmuxd survived TERM/KILL" if failure == "private USB" else "cleanup incomplete.*sshfs"
+    with pytest.raises(RuntimeError, match=message):
+        creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {}, fresh_disk=True)
+
+    receipt = creator._read_json(vm / ".limulator-create.json")
+    record = receipt["fresh_disks"][-1]
+    assert receipt["state"] == "error"
+    if failure in ("scope", "both"):
+        assert "PID 4321 /usr/bin/sshfs" in receipt["cleanup_error"]
+    if failure == "private USB":
+        assert "usbmuxd survived TERM/KILL" in receipt["cleanup_error"]
+        assert "4322" in receipt["cleanup_error"]
+    if failure == "both":
+        assert "private USB helper remains active" in receipt["cleanup_error"]
+    assert record["state"] == ("restore-started" if scope_owned else "prepared")
+    assert disk.read_bytes() == bytes(len(original))
+    assert creator.Path(record["disk"]["path"]).read_bytes() == original
+    assert closed == [True]
+    released = creator._lock_disk(disk)
+    os.close(released)
+
+
+@pytest.mark.parametrize("failure", ["scope", "private USB"])
+def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(catalog, monkeypatch, failure):
+    candidate, _ = _unregistered_booted_vm(catalog)
+    vm = candidate.vm_path
+    (catalog.backend / "setup/create-vm.sh").write_text(
+        "# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n"
+    )
+    monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
+    monkeypatch.setattr(creator, "_unit_states", lambda: {})
+    monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
+    monkeypatch.setattr(creator, "_resume_completed_boot", lambda *_: None)
+    monkeypatch.setattr(creator._USBHelpers, "start", lambda self: None)
+    monkeypatch.setattr(
+        creator.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: 0, returncode=0),
+    )
+    monkeypatch.setattr(
+        creator, "GuestClient", lambda **kwargs: SimpleNamespace(rpc=lambda *_: {"locked": False})
+    )
+    monkeypatch.setattr(creator, "_verify_guest_migration", lambda *_: _migration_settings())
+    monkeypatch.setattr(creator, "_verified_guest_info", lambda *_: {"ios_version": candidate.os_version})
+    monkeypatch.setattr(creator, "_stop_creation_guest", lambda *_: None)
+    monkeypatch.setattr(creator, "Runtime", lambda *_: pytest.fail("runtime must not start before cleanup"))
+    closed = []
+
+    def cleanup_scope(*_args, **_kwargs):
+        if failure == "scope":
+            raise RuntimeError("owned scope cleanup failed")
+
+    def close_helpers(_self):
+        closed.append(True)
+        if failure == "private USB":
+            raise RuntimeError("private USB helper remains active")
+
+    monkeypatch.setattr(creator, "_cleanup_creation_scope", cleanup_scope)
+    monkeypatch.setattr(creator._USBHelpers, "close", close_helpers)
+    message = "owned scope cleanup failed" if failure == "scope" else "private USB helper remains active"
+    with pytest.raises(RuntimeError, match=message):
+        creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+
+    assert Registry(catalog).list() == []
+    receipt = creator._read_json(vm / ".limulator-create.json")
+    assert receipt["state"] == "error"
+    assert message in receipt["cleanup_error"]
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("survivor", ["process", "mount", "none"])
+def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, survivor):
+    candidate, _ = _incomplete_vm(catalog)
+    vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
+    original = disk.read_bytes()
+    (catalog.backend / "setup/create-vm.sh").write_text(
+        "# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n"
+    )
+    monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
+    monkeypatch.setattr(creator, "_unit_states", lambda: {})
+    monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
+    monkeypatch.setattr(creator._USBHelpers, "start", lambda self: None)
+    monkeypatch.setattr(creator._USBHelpers, "close", lambda self: None)
+    monkeypatch.setattr(
+        creator.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: 1, returncode=1),
+    )
+    monkeypatch.setattr(creator, "_in_scope", lambda *_: pytest.fail("the refused launcher has exited"))
+    monkeypatch.setattr(
+        _creation_cleanup,
+        "_scope_processes",
+        lambda group: (
+            [
+                {
+                    "pid": 4321,
+                    "start_ticks": 1234,
+                    "boot_id": creator._identity(os.getpid())["boot_id"],
+                    "uid": 0,
+                    "exe": "/usr/bin/sshfs",
+                    "argv": [],
+                    "cgroup": f"0::{group}",
+                    "mount_namespace": os.readlink("/proc/self/ns/mnt"),
+                }
+            ]
+            if survivor == "process"
+            else []
+        ),
+    )
+    mount = {"target": "/var/tmp/vphone-cfw.aabbccdd/system", "record": "surviving mount"}
+    snapshots = iter([[], [mount] if survivor == "mount" else []])
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: next(snapshots))
+    monkeypatch.setattr(
+        _creation_cleanup, "_pidfd", lambda *_: pytest.fail("an unproven scope must not pin processes")
+    )
+    monkeypatch.setattr(
+        _creation_cleanup, "_signal", lambda *_: pytest.fail("an unproven scope must not signal processes")
+    )
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
+    )
+    requests = []
+
+    def inspect_only(_command, _env, *, input, timeout):
+        request = json.loads(input)
+        requests.append(request)
+        _creation_cleanup.cleanup(**request)
+
+    monkeypatch.setattr(creator, "_sudo", inspect_only)
+    message = (
+        "upstream creation exited with status 1"
+        if survivor == "none"
+        else "scope ownership was not established"
+    )
+    with pytest.raises(RuntimeError, match=message):
+        creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
+
+    assert requests[0]["scope_owned"] is False
+    receipt = creator._read_json(vm / ".limulator-create.json")
+    assert "upstream creation exited with status 1" in receipt["error"]
+    if survivor == "none":
+        assert "cleanup_error" not in receipt
+    else:
+        assert "scope ownership was not established" in receipt["cleanup_error"]
+    assert disk.read_bytes() == original
+
+
+@pytest.mark.parametrize("fresh_disk", [False, True])
+def test_retry_preserves_unresolved_cleanup_without_accepting_a_new_mount_baseline(
+    catalog, monkeypatch, fresh_disk
+):
+    candidate, receipt = _incomplete_vm(catalog)
+    vm, disk = candidate.vm_path, candidate.vm_path / "Disk.img"
+    receipt.update(
+        scope="limulator-create-1000-aabbccdd.scope", cleanup_error="surviving root SSHFS PID 4321"
+    )
+    state_path = vm / ".limulator-create.json"
+    creator._atomic_json(state_path, receipt)
+    before = state_path.read_bytes(), disk.read_bytes(), sorted(vm.iterdir())
+    monkeypatch.setattr(
+        _creation_cleanup, "mounts", lambda: pytest.fail("unresolved mounts must not become a new baseline")
+    )
+    monkeypatch.setattr(creator._USBHelpers, "start", lambda self: pytest.fail("must not start helpers"))
+    with pytest.raises(RuntimeError, match="previous creation cleanup is unresolved.*surviving root SSHFS"):
+        creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {}, fresh_disk=fresh_disk)
+    assert (state_path.read_bytes(), disk.read_bytes(), sorted(vm.iterdir())) == before
+
+
+@pytest.fixture
+def cleanup_scope(monkeypatch):
+    unit = "limulator-create-1000-aabbccdd.scope"
+    group = f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"
+    boot = creator.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    identity = {
+        "pid": 4321,
+        "start_ticks": 1234,
+        "boot_id": boot,
+        "uid": 0,
+        "exe": "/usr/bin/sshfs",
+        "argv": [],
+        "cgroup": f"0::{group}\n",
+        "mount_namespace": os.readlink("/proc/self/ns/mnt"),
+    }
+    alive = {identity["pid"]: identity}
+    monkeypatch.setattr(_creation_cleanup, "_scope_processes", lambda *_: list(alive.values()))
+    monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: alive.get(pid))
+    monkeypatch.setattr(_creation_cleanup, "_pidfd", lambda pid: os.open("/dev/null", os.O_RDONLY))
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [])
+    return unit, boot, identity, alive
+
+
+@pytest.mark.parametrize("changed", ["start_ticks", "cgroup"])
+def test_scope_cleanup_refuses_reused_pid_or_foreign_scope(cleanup_scope, monkeypatch, changed):
+    unit, boot, identity, _ = cleanup_scope
+    if changed == "start_ticks":
+        monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: identity | {"start_ticks": 9999})
+    else:
+        identity["cgroup"] = "0::/other.scope\n"
+    monkeypatch.setattr(
+        _creation_cleanup, "_signal", lambda *_: pytest.fail("identity mismatch must prevent signaling")
+    )
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
+    )
+    with pytest.raises(RuntimeError, match="identity changed|outside the owned scope"):
+        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+
+
+@pytest.mark.parametrize("source", ["root@vphone:/mnt1", "root@foreign:/mnt1"])
+def test_scope_cleanup_requires_exact_private_sshfs_before_unmount_and_pidfd_signal(
+    cleanup_scope, tmp_path, monkeypatch, source
+):
+    unit, boot, identity, alive = cleanup_scope
+    directory = tmp_path / "vphone-cfw.aabbccdd"
+    directory.mkdir(mode=0o700)
+    target = str(directory / "system")
+    identity["argv"] = ["/usr/bin/sshfs", "-f", "root@vphone:/mnt1", target]
+    mount = {
+        "id": "123",
+        "target": target,
+        "source": source,
+        "type": "fuse.sshfs",
+        "record": "exact mount",
+    }
+    attached = [mount]
+    monkeypatch.setattr(_creation_cleanup, "_cfw_target", lambda value: value == target)
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: list(attached))
+    fstat = os.fstat
+
+    def root_directory_metadata(fd):
+        info = fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            return info
+        metadata = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+        return SimpleNamespace(**(metadata | {"st_uid": 0}))
+
+    monkeypatch.setattr(
+        _creation_cleanup.os,
+        "fstat",
+        root_directory_metadata,
+    )
+    actions = []
+
+    def unmount(command, **kwargs):
+        assert command == ["/usr/bin/fusermount3", "-u", target]
+        actions.append("unmount")
+        attached.clear()
+        return SimpleNamespace(returncode=0)
+
+    def terminate(fd, value):
+        assert value == creator.signal.SIGTERM
+        actions.append("pidfd TERM")
+        alive.clear()
+
+    monkeypatch.setattr(_creation_cleanup.subprocess, "run", unmount)
+    monkeypatch.setattr(_creation_cleanup, "_signal", terminate)
+    if source == "root@vphone:/mnt1":
+        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+        assert actions == ["unmount", "pidfd TERM"]
+    else:
+        with pytest.raises(RuntimeError, match="SSHFS mount identity differs"):
+            _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+        assert actions == []
+
+
+def test_scope_cleanup_refuses_mount_without_an_owned_process(cleanup_scope, monkeypatch):
+    unit, boot, _, alive = cleanup_scope
+    alive.clear()
+    mount = {"target": "/var/tmp/vphone-cfw.aabbccdd/system", "record": "unattributed mount"}
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [mount])
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
+    )
+    with pytest.raises(RuntimeError, match="mount ownership could not be proven"):
+        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+
+
 @pytest.mark.parametrize("mismatch", ["missing", "specification", "restore", "ready"])
 def test_fresh_disk_requires_matching_incomplete_receipt(catalog, mismatch):
     candidate, receipt = _incomplete_vm(catalog)
@@ -835,6 +1168,7 @@ def test_attacher_refuses_unowned_local_listener(catalog, tmp_path, monkeypatch)
     helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
     helper.daemon_identity = creator._identity(os.getpid())
     monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: {})
     monkeypatch.setattr(creator, "_listener_pids", lambda: [1234])
     monkeypatch.setattr(creator, "_in_scope", lambda *_: False)
     monkeypatch.setattr(
@@ -850,8 +1184,10 @@ def test_attacher_only_requests_the_owned_exported_apple_bus(catalog, tmp_path, 
     monkeypatch.setattr(creator, "_apple_devices", lambda: [])
     monkeypatch.setattr(creator, "_listener_pids", lambda: [1234])
     monkeypatch.setattr(creator, "_in_scope", lambda *_: True)
-    states = iter([{}, {}, {0: "0-0"}])
-    monkeypatch.setattr(creator, "_vhci_ports", lambda: next(states))
+    ports = {}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection} if ports else set())
     monkeypatch.setattr(
         creator, "_run", lambda *args, **kwargs: SimpleNamespace(stdout="  1-1: Apple DFU (05ac:1227)\n")
     )
@@ -859,12 +1195,203 @@ def test_attacher_only_requests_the_owned_exported_apple_bus(catalog, tmp_path, 
 
     def attach(command, *_args, **_kwargs):
         calls.append(command)
+        ports[0] = "0-0"
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(creator, "_sudo", attach)
     helper.poll()
     assert calls == [["usbip", "attach", "-r", "127.0.0.1", "-b", "1-1"]]
     assert helper.owned_ports == {0}
+    assert helper.import_connections == {0: connection}
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_attacher_refuses_listener_replacement_before_recording_import_identity(
+    catalog, tmp_path, monkeypatch, when
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon_identity = creator._identity(os.getpid())
+    ports = {}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    listeners = iter([[1234], [9999]] if when == "before" else [[1234], [1234], [9999]])
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: next(listeners))
+    monkeypatch.setattr(creator, "_in_scope", lambda pid, unit: pid == 1234)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection} if ports else set())
+    monkeypatch.setattr(
+        creator, "_run", lambda *args, **kwargs: SimpleNamespace(stdout="  1-1: Apple DFU (05ac:1227)\n")
+    )
+    commands = []
+
+    def attach(command, *_args, **_kwargs):
+        commands.append(command)
+        ports[0] = "0-0"
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(creator, "_sudo", attach)
+    with pytest.raises(RuntimeError, match=f"listener ownership changed {when} owned attach"):
+        helper.poll()
+    assert helper.import_connections == {}
+    assert len(commands) == (0 if when == "before" else 1)
+    if when == "during":
+        ticks = iter(range(20))
+        monkeypatch.setattr(creator.time, "monotonic", lambda: next(ticks))
+        monkeypatch.setattr(creator.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(
+            creator, "_sudo", lambda *_args, **_kwargs: pytest.fail("unproven import must not be detached")
+        )
+        with pytest.raises(RuntimeError, match="no recorded import connection identity"):
+            helper.close()
+        assert ports == {0: "0-0"}
+
+
+def test_ambiguous_attach_cannot_report_cleanup_complete_or_detach_unproven_imports(
+    catalog, tmp_path, monkeypatch
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon_identity = creator._identity(os.getpid())
+    ports = {}
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: [1234])
+    monkeypatch.setattr(creator, "_in_scope", lambda *_: True)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: set())
+    monkeypatch.setattr(
+        creator, "_run", lambda *args, **kwargs: SimpleNamespace(stdout="  1-1: Apple DFU (05ac:1227)\n")
+    )
+
+    def attach(*_args, **_kwargs):
+        ports.update({0: "0-0", 7: "foreign"})
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(creator, "_sudo", attach)
+    with pytest.raises(RuntimeError, match="could not identify.*newly imported virtual USB port"):
+        helper.poll()
+    monkeypatch.setattr(
+        creator, "_sudo", lambda *_args, **_kwargs: pytest.fail("unproven imports must not be detached")
+    )
+    with pytest.raises(RuntimeError, match="unresolved import identity: active ports"):
+        helper.close()
+    assert ports == {0: "0-0", 7: "foreign"}
+
+
+@pytest.mark.parametrize("phase", ["poll", "close"])
+@pytest.mark.parametrize("change", ["socket", "endpoint", "missing-receipt", "another-port"])
+def test_same_index_import_replacement_is_never_detached(catalog, tmp_path, monkeypatch, phase, change):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon_identity = creator._identity(os.getpid())
+    helper.owned_ports = {0}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    if change != "missing-receipt":
+        helper.import_connections = {0: connection}
+    current = connection
+    if change == "socket":
+        current = (*connection[:3], 9999)
+    if change == "endpoint":
+        current = (connection[0], "0100007F:4321", *connection[2:])
+    ports = {0: "0-0"}
+    if change == "another-port":
+        ports[7] = "foreign"
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: [])
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {current})
+    monkeypatch.setattr(
+        creator, "_sudo", lambda *_args, **_kwargs: pytest.fail("unproven import must not be detached")
+    )
+    ticks = iter(range(30))
+    monkeypatch.setattr(creator.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(creator.time, "sleep", lambda *_: None)
+    with pytest.raises(RuntimeError, match="identity|ambiguous|unowned USB/IP imports"):
+        getattr(helper, phase)()
+    assert ports[0] == "0-0"
+
+
+def test_owned_import_identity_survives_usb_address_changes_and_allows_own_reattach(
+    catalog, tmp_path, monkeypatch
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon_identity = creator._identity(os.getpid())
+    ports, connections = {}, set()
+    identities = iter(
+        [
+            ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678),
+            ("net:[123]", "0100007F:4321", "0100007F:0CA8", 9999),
+        ]
+    )
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: [1234])
+    monkeypatch.setattr(creator, "_in_scope", lambda *_: True)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: set(connections))
+    monkeypatch.setattr(
+        creator, "_run", lambda *args, **kwargs: SimpleNamespace(stdout="  1-1: Apple DFU (05ac:1227)\n")
+    )
+
+    def attach(*_args, **_kwargs):
+        ports[0] = "0-0"
+        connections.add(next(identities))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(creator, "_sudo", attach)
+    helper.poll()
+    first = helper.import_connections[0]
+    ports[0] = "nonexistent-test-usb-address"
+    helper.poll()
+    assert helper.import_connections[0] == first
+    ports.clear()
+    connections.clear()
+    helper.poll()
+    assert helper.owned_ports == {0}
+    assert helper.import_connections[0] != first
+    assert set(helper.import_connections.values()) == connections
+
+
+def test_private_helper_close_waits_for_normal_disconnection_without_detaching_a_replacement(
+    catalog, tmp_path, monkeypatch
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.owned_ports = {0}
+    helper.import_connections = {0: ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)}
+    snapshots = iter([{0: "0-0"}, {0: "0-0"}, {}])
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: next(snapshots, {}))
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: set())
+    waits = []
+    monkeypatch.setattr(creator.time, "sleep", lambda duration: waits.append(duration))
+    monkeypatch.setattr(
+        creator, "_sudo", lambda *_args, **_kwargs: pytest.fail("disconnected imports must not be detached")
+    )
+    helper.close()
+    assert waits == [0.05]
+    assert helper.owned_ports == set()
+    assert helper.import_connections == {}
+
+
+@pytest.mark.parametrize("inode", [5678, 0])
+def test_usbip_connection_identity_uses_established_socket_inode_and_endpoints(tmp_path, monkeypatch, inode):
+    tcp = tmp_path / "tcp"
+    tcp.write_text(
+        "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
+        f"0: 0100007F:1234 0100007F:0CA8 01 0:0 0:0 0 0 0 {inode}\n"
+        "1: 0100007F:0CA8 0100007F:1234 01 0:0 0:0 0 0 0 9999\n"
+        "2: 0100007F:4321 0100007F:0CA8 06 0:0 0:0 0 0 0 0\n"
+    )
+    read_text = creator.Path.read_text
+    monkeypatch.setattr(
+        creator.Path,
+        "read_text",
+        lambda path, *args, **kwargs: read_text(
+            tcp if str(path) == "/proc/net/tcp" else path, *args, **kwargs
+        ),
+    )
+    if inode:
+        assert creator._usbip_connections() == {
+            (os.readlink("/proc/self/ns/net"), "0100007F:1234", "0100007F:0CA8", inode)
+        }
+    else:
+        with pytest.raises(RuntimeError, match="no kernel socket inode"):
+            creator._usbip_connections()
 
 
 def test_vhci_parser_counts_import_before_device_gets_its_usb_address(tmp_path, monkeypatch):
@@ -933,6 +1460,151 @@ def test_private_daemon_and_rule_are_cleaned_without_global_service_operations(
         helper.close()
     assert helper.daemon.poll() is not None
     assert any(command == ["rm", "--", str(helper.rule)] for command, _ in commands)
+
+
+def test_private_helper_close_escalates_owned_daemon_and_preserves_foreign_imports(
+    catalog, tmp_path, monkeypatch
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    identity = {"pid": 4321, "start_ticks": 1234, "boot_id": "owned-boot"}
+    helper.daemon_identity = identity
+    helper.owned_ports = {2}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    helper.import_connections = {2: connection}
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection})
+    helper.rule_created = True
+    alive = True
+    signals, waits, commands = [], [], []
+    ports = {2: "owned"}
+    monkeypatch.setattr(creator, "_identity_alive", lambda value: value == identity and alive)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+
+    def signal_owned(value, signal):
+        nonlocal alive
+        assert value == identity
+        signals.append(signal)
+        if signal == creator.signal.SIGKILL:
+            alive = False
+
+    def wait(*, timeout):
+        waits.append(timeout)
+        raise subprocess.TimeoutExpired("private usbmuxd", timeout)
+
+    def privileged(command, *_args, **_kwargs):
+        commands.append(command)
+        if command[:2] == ["usbip", "detach"]:
+            assert command == ["usbip", "detach", "-p", "2"]
+            ports.pop(2)
+            ports[7] = "foreign"
+        return SimpleNamespace(returncode=0)
+
+    helper.daemon = SimpleNamespace(wait=wait)
+    monkeypatch.setattr(creator, "_signal_owned", signal_owned)
+    monkeypatch.setattr(creator, "_sudo", privileged)
+    helper.close()
+    assert signals == [creator.signal.SIGTERM, creator.signal.SIGKILL]
+    assert waits == [10, 5]
+    assert ports == {7: "foreign"}
+    assert helper.owned_ports == set()
+    assert helper.rule_created is False
+    assert commands == [
+        ["usbip", "detach", "-p", "2"],
+        ["rm", "--", helper.rule],
+        ["udevadm", "control", "--reload"],
+    ]
+
+
+def test_private_helper_close_reports_survivors_and_attempts_remaining_owned_cleanup(
+    catalog, tmp_path, monkeypatch
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon_identity = {"pid": 4321, "start_ticks": 1234, "boot_id": "owned-boot"}
+    helper.owned_ports = {2}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    helper.import_connections = {2: connection}
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection})
+    helper.rule_created = True
+    ports = {2: "owned"}
+    signals, commands = [], []
+    monkeypatch.setattr(creator, "_identity_alive", lambda *_: True)
+    monkeypatch.setattr(creator, "_signal_owned", lambda identity, value: signals.append(value))
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    ticks = iter(range(20))
+    monkeypatch.setattr(creator.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(creator.time, "sleep", lambda *_: None)
+
+    def wait(*, timeout):
+        raise subprocess.TimeoutExpired("private usbmuxd", timeout)
+
+    def privileged(command, *_args, **_kwargs):
+        commands.append(command)
+        if command == ["usbip", "detach", "-p", "2"]:
+            return SimpleNamespace(returncode=1, stderr="detach denied")
+        if command[0] == "rm":
+            raise RuntimeError("rule removal denied")
+        return SimpleNamespace(returncode=0)
+
+    helper.daemon = SimpleNamespace(wait=wait)
+    monkeypatch.setattr(creator, "_sudo", privileged)
+    with pytest.raises(RuntimeError, match="private USB cleanup incomplete") as failure:
+        helper.close()
+    assert "usbmuxd survived TERM/KILL" in str(failure.value)
+    assert "4321" in str(failure.value)
+    assert "port 2 detach exited 1: detach denied" in str(failure.value)
+    assert "imports remain attached: [2]" in str(failure.value)
+    assert "rule removal denied" in str(failure.value)
+    assert signals == [creator.signal.SIGTERM, creator.signal.SIGKILL]
+    assert helper.owned_ports == {2}
+    assert ports == {2: "owned"}
+    assert commands == [
+        ["usbip", "detach", "-p", "2"],
+        ["rm", "--", helper.rule],
+        ["udevadm", "control", "--reload"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "status,remains,message", [(0, True, "remain attached"), (1, False, "detach exited 1")]
+)
+def test_private_helper_close_requires_detach_success_and_verified_port_absence(
+    catalog, tmp_path, monkeypatch, status, remains, message
+):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.owned_ports = {2}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    helper.import_connections = {2: connection}
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection})
+    ports = {2: "owned"}
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: dict(ports))
+    ticks = iter(range(20))
+    monkeypatch.setattr(creator.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(creator.time, "sleep", lambda *_: None)
+    commands = []
+
+    def detach(command, *_args, **_kwargs):
+        commands.append(command)
+        if not remains:
+            ports.pop(2)
+        ports[7] = "foreign"
+        return SimpleNamespace(returncode=status, stderr="detach denied")
+
+    monkeypatch.setattr(creator, "_sudo", detach)
+    with pytest.raises(RuntimeError, match=message):
+        helper.close()
+    assert commands == [["usbip", "detach", "-p", "2"]]
+    assert 7 in ports
+    assert helper.owned_ports == ({2} if remains else set())
+
+
+def test_private_helper_close_preserves_a_daemon_without_validated_identity(catalog, tmp_path, monkeypatch):
+    helper = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    helper.daemon = SimpleNamespace(pid=4321, poll=lambda: None)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: {})
+    monkeypatch.setattr(
+        creator, "_signal_owned", lambda *_: pytest.fail("unproven daemon must not be signaled")
+    )
+    with pytest.raises(RuntimeError, match="no validated identity: PID 4321"):
+        helper.close()
 
 
 def test_final_guest_shutdown_refuses_unowned_process(catalog, tmp_path, monkeypatch):
