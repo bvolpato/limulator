@@ -25,6 +25,8 @@ The project notice is `Copyright (c) 2026 @Lakr233`, under the MIT License. The 
 
 The QEMU base is [qemu-vphone at 14c9913d2231080bd234c69421ed4f293a25f767](https://github.com/YahiaAngelo/qemu-vphone/tree/14c9913d2231080bd234c69421ed4f293a25f767). Patch 0006 ports acquire/release ordering changes from [38c32a9bf16d92c0fd1d82b20c051cbe34a90372](https://github.com/YahiaAngelo/qemu-vphone/commit/38c32a9bf16d92c0fd1d82b20c051cbe34a90372). Patch 0008 ports jump-cache invalidation changes from [f6b3bc9d8ec9ba3113a4dbae9e9584775cd0d1f2](https://github.com/YahiaAngelo/qemu-vphone/commit/f6b3bc9d8ec9ba3113a4dbae9e9584775cd0d1f2). Both commits record YahiaAngelo as author, and their identifiers remain in the patches and lock.
 
+Patch 0014 backports exact generic-timer counter and WFIT deadline conversion from [3e884e825cd6d545f9774c236113cfd8745e204e](https://github.com/YahiaAngelo/qemu-vphone/commit/3e884e825cd6d545f9774c236113cfd8745e204e).
+
 The modified source files carry these notices:
 
 | Patch | Pinned source file | Copyright notice | File license |
@@ -33,6 +35,10 @@ The modified source files carry these notices:
 | 0008 | [accel/tcg/cpu-exec.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/accel/tcg/cpu-exec.c) | `Copyright (c) 2003-2005 Fabrice Bellard` | LGPL version 2.1 or later |
 | 0008 | [accel/tcg/tb-maint.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/accel/tcg/tb-maint.c) | `Copyright (c) 2003 Fabrice Bellard` | LGPL version 2.1 or later |
 | 0008 | [accel/tcg/tb-jmp-cache.h](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/accel/tcg/tb-jmp-cache.h) | `Copyright (c) 2003 Fabrice Bellard` | `GPL-2.0-or-later` |
+| 0014 | [target/arm/cpu.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/cpu.c) | `Copyright (c) 2012 SUSE LINUX Products GmbH` | GPL version 2 or later |
+| 0014 | [target/arm/cpu.h](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/cpu.h) | `Copyright (c) 2003 Fabrice Bellard` | LGPL version 2.1 or later |
+| 0014 | [target/arm/helper.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/helper.c) | No separate holder line | `GPL-2.0-or-later` |
+| 0014 | [target/arm/tcg/op_helper.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/tcg/op_helper.c) | `Copyright (c) 2005-2007 CodeSourcery, LLC` | LGPL version 2.1 or later |
 
 The patches leave those source headers unchanged. The complete pinned license texts are copied from [COPYING](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/COPYING) to [LICENSES/qemu-GPL-2.0.txt](LICENSES/qemu-GPL-2.0.txt) and from [COPYING.LIB](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/COPYING.LIB) to [LICENSES/qemu-LGPL-2.1.txt](LICENSES/qemu-LGPL-2.1.txt).
 
@@ -55,3 +61,7 @@ The header states GNU Lesser General Public License version 2.1 and retains its 
 The derived fixture files [main.c](benchmarks/smc/main.c), [start.S](benchmarks/smc/start.S), and [link.ld](benchmarks/smc/link.ld) carry `SPDX-License-Identifier: GPL-2.0-or-later` and identify their [vphone-fence source at 38c32a9bf16d92c0fd1d82b20c051cbe34a90372](https://github.com/YahiaAngelo/qemu-vphone/tree/38c32a9bf16d92c0fd1d82b20c051cbe34a90372/tests/tcg/vphone-fence). The original fixture's `main.c` carries that SPDX identifier; its boot and linker files have no separate license header and are covered by the no-header GPL version 2-or-later statement in QEMU's notice.
 
 The complete GPL version 2 text is already retained in [benchmarks/smc/COPYING](benchmarks/smc/COPYING). The [benchmark README](benchmarks/smc/README.md) also credits the fixture and epoch implementation with exact commits. The benchmark runner is original Limulator code under the root MIT license.
+
+## Generic-timer regression fixture
+
+The derived C, assembly, and linker sources in [benchmarks/timer](benchmarks/timer/README.md) retain `GPL-2.0-or-later` notices and credit [vphone-cnt at 108e1421d208e2f17d6a8d5b98ac7659c3517873](https://github.com/YahiaAngelo/qemu-vphone/tree/108e1421d208e2f17d6a8d5b98ac7659c3517873/tests/tcg/vphone-cnt), introduced by [dc666bc8dd40bd6e2285f544928415b518bb29d7](https://github.com/YahiaAngelo/qemu-vphone/commit/dc666bc8dd40bd6e2285f544928415b518bb29d7). The complete GPL version 2 text is retained in [benchmarks/smc/COPYING](benchmarks/smc/COPYING). The Python runner and shell scope wrapper are original Limulator code under the root MIT license.

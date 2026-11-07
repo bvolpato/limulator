@@ -1,0 +1,123 @@
+# Exact backport of vphone-linux QEMU commit 3e884e825cd6d545f9774c236113cfd8745e204e.
+# Source: https://github.com/YahiaAngelo/qemu-vphone/commit/3e884e825cd6d545f9774c236113cfd8745e204e
+# Counts CNTFRQ exactly and converts generic timer/WFIT deadlines to nanoseconds.
+diff --git a/target/arm/cpu.c b/target/arm/cpu.c
+index a10bc88a98..97f9c4afb2 100644
+--- a/target/arm/cpu.c
++++ b/target/arm/cpu.c
+@@ -1121,6 +1121,35 @@ unsigned int gt_cntfrq_period_ns(ARMCPU *cpu)
+       NANOSECONDS_PER_SECOND / cpu->gt_cntfrq_hz : 1;
+ }
+ 
++/*
++ * vphone: the count and the timers' deadlines use CNTFRQ exactly. The integer
++ * period above truncates 1e9 / CNTFRQ: at vresearch101's 24 MHz it is 41 ns
++ * instead of 41.67, so the guest's clock gained 1.63% (a second a minute). The
++ * deadlines are the count's exact inverse (rounded up), which keeps the
++ * property the period was chosen for: a timer never fires before the count
++ * reaches its compare value. Where 1e9 is a multiple of CNTFRQ, both are what
++ * the period gave. As there, CNTFRQ is capped at 1 GHz.
++ */
++static uint32_t gt_cntfrq_capped(ARMCPU *cpu)
++{
++    return MIN(cpu->gt_cntfrq_hz, NANOSECONDS_PER_SECOND);
++}
++
++uint64_t gt_ns_to_ticks(ARMCPU *cpu, uint64_t ns)
++{
++    return muldiv64(ns, gt_cntfrq_capped(cpu), NANOSECONDS_PER_SECOND);
++}
++
++int64_t gt_ticks_to_ns(ARMCPU *cpu, uint64_t ticks)
++{
++    uint32_t hz = gt_cntfrq_capped(cpu);
++
++    if (ticks > muldiv64(INT64_MAX, hz, NANOSECONDS_PER_SECOND)) {
++        return INT64_MAX;
++    }
++    return muldiv64_round_up(ticks, NANOSECONDS_PER_SECOND, hz);
++}
++
+ static void arm_cpu_propagate_feature_implications(ARMCPU *cpu)
+ {
+     CPUARMState *env = &cpu->env;
+@@ -1558,7 +1587,8 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
+     }
+ 
+     {
+-        uint64_t scale = gt_cntfrq_period_ns(cpu);
++        /* Deadlines are set in nanoseconds: gt_ticks_to_ns(). */
++        uint64_t scale = SCALE_NS;
+ 
+         cpu->gt_timer[GTIMER_PHYS] = timer_new(QEMU_CLOCK_VIRTUAL, scale,
+                                                arm_gt_ptimer_cb, cpu);
+diff --git a/target/arm/cpu.h b/target/arm/cpu.h
+index 0719547b80..b5d71e1180 100644
+--- a/target/arm/cpu.h
++++ b/target/arm/cpu.h
+@@ -1259,6 +1259,14 @@ void arm_gt_sel2timer_cb(void *opaque);
+ void arm_gt_sel2vtimer_cb(void *opaque);
+ 
+ unsigned int gt_cntfrq_period_ns(ARMCPU *cpu);
++/* The generic timer's count at QEMU_CLOCK_VIRTUAL time @ns, exactly. */
++uint64_t gt_ns_to_ticks(ARMCPU *cpu, uint64_t ns);
++/*
++ * The earliest QEMU_CLOCK_VIRTUAL time at which the count reaches @ticks
++ * (the exact inverse of gt_ns_to_ticks); INT64_MAX when that is beyond the
++ * range of a QEMUTimer.
++ */
++int64_t gt_ticks_to_ns(ARMCPU *cpu, uint64_t ticks);
+ void gt_rme_post_el_change(ARMCPU *cpu, void *opaque);
+ 
+ #define ARM_AFF0_SHIFT 0
+diff --git a/target/arm/helper.c b/target/arm/helper.c
+index bdaa9e8a91..15b372cb7e 100644
+--- a/target/arm/helper.c
++++ b/target/arm/helper.c
+@@ -1286,7 +1286,7 @@ uint64_t gt_get_countervalue(CPUARMState *env)
+ {
+     ARMCPU *cpu = env_archcpu(env);
+ 
+-    return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / gt_cntfrq_period_ns(cpu);
++    return gt_ns_to_ticks(cpu, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+ }
+ 
+ static void gt_update_irq(ARMCPU *cpu, int timeridx)
+@@ -1456,11 +1456,7 @@ static void gt_recalc_timer(ARMCPU *cpu, int timeridx)
+          * set the timer for as far in the future as possible. When the
+          * timer expires we will reset the timer for any remaining period.
+          */
+-        if (nexttick > INT64_MAX / gt_cntfrq_period_ns(cpu)) {
+-            timer_mod_ns(cpu->gt_timer[timeridx], INT64_MAX);
+-        } else {
+-            timer_mod(cpu->gt_timer[timeridx], nexttick);
+-        }
++        timer_mod_ns(cpu->gt_timer[timeridx], gt_ticks_to_ns(cpu, nexttick));
+         trace_arm_gt_recalc(timeridx, nexttick);
+     } else {
+         /* Timer disabled: ISTATUS and timer output always clear */
+diff --git a/target/arm/tcg/op_helper.c b/target/arm/tcg/op_helper.c
+index 53299002fb..950694818d 100644
+--- a/target/arm/tcg/op_helper.c
++++ b/target/arm/tcg/op_helper.c
+@@ -431,15 +431,11 @@ void HELPER(wfit)(CPUARMState *env, uint64_t timeout)
+     if (uadd64_overflow(timeout, offset, &nexttick)) {
+         nexttick = UINT64_MAX;
+     }
+-    if (nexttick > INT64_MAX / gt_cntfrq_period_ns(cpu)) {
+-        /*
+-         * If the timeout is too long for the signed 64-bit range
+-         * of a QEMUTimer, let it expire early.
+-         */
+-        timer_mod_ns(cpu->wfxt_timer, INT64_MAX);
+-    } else {
+-        timer_mod(cpu->wfxt_timer, nexttick);
+-    }
++    /*
++     * The timer counts nanoseconds (a deadline in ticks fired it ~41x early
++     * at 24 MHz); one too long for a QEMUTimer expires early.
++     */
++    timer_mod_ns(cpu->wfxt_timer, gt_ticks_to_ns(cpu, nexttick));
+     cs->exception_index = EXCP_HLT;
+     cs->halted = 1;
+     cpu_loop_exit(cs);
