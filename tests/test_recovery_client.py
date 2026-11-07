@@ -100,7 +100,7 @@ def test_setup_failure_retries_without_reusing_freed_client(tmp_path, configurat
     # Exercise the same edits and source sync used by bootstrap_backend.sh cli.
     build = tmp_path / "linux-create"
     build.mkdir()
-    for directory in ("edits", "excludes"):
+    for directory in ("edits", "excludes", "overlay"):
         shutil.copytree(BACKEND / "linux-create" / directory, build / directory)
     # This patch adds the file. Start before it even if bootstrap already applied it.
     (build / "edits/MobileRecoveryCore.txt").unlink(missing_ok=True)
