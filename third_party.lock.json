@@ -147,6 +147,11 @@
       "path": "patches/0017-linux-require-guest-receipt.patch",
       "sha256": "66adc17e6552f88e987cc747dd7faec6d4595578d8f7e556f40355569cd148af",
       "target": "backend"
+    },
+    {
+      "path": "patches/0018-first-boot-migration-result.patch",
+      "sha256": "1f108639f0934c6a4321ad5d1155594b5cb9a0316aca6bcf99e2cc1b6eeab237",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},
