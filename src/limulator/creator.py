@@ -53,6 +53,14 @@ from .protocols import GuestClient, ProtocolError
 
 _STAGES = ("sanity", "bundle", "firmware", "gpu-driver", "prepare", "patch", "restore", "cfw", "booted")
 _HOST_CREATION_LOCK = Path("/run/lock/limulator-create.lock")
+_BACKEND_CONTROL_ALIASES = (
+    ("LIMULATOR_FIRST_BOOT_QMP", "VPHONE_FIRST_BOOT_QMP"),
+    ("LIMULATOR_USB_TRACE", "VPHONE_USB_TRACE"),
+    ("LIMULATOR_USB_TRACE_FILE", "VPHONE_USB_TRACE_FILE"),
+    ("LIMULATOR_FIRST_BOOT_TIMEOUT", "VPHONE_FIRST_BOOT_TIMEOUT"),
+    ("LIMULATOR_SHUTDOWN_TIMEOUT", "VPHONE_SHUTDOWN_TIMEOUT"),
+    ("LIMULATOR_MIGRATION_TIMEOUT", "VPHONE_MIGRATION_TIMEOUT"),
+)
 
 
 def _run(command, *, env=None, timeout=30, check=True, input=None):
@@ -60,6 +68,15 @@ def _run(command, *, env=None, timeout=30, check=True, input=None):
     if check and result.returncode:
         raise RuntimeError(f"{command[0]} exited with status {result.returncode}: {result.stderr.strip()}")
     return result
+
+
+def _normalize_backend_controls(env: dict[str, str]) -> None:
+    for legacy, native in _BACKEND_CONTROL_ALIASES:
+        if native not in env and legacy in env:
+            env[native] = env[legacy]
+        env.pop(legacy, None)
+    env.pop("LIMULATOR_CREATOR_USB_READY", None)
+    env.pop("VPHONE_CREATOR_USB_READY", None)
 
 
 def _native_env(paths: Paths) -> dict[str, str]:
@@ -89,12 +106,7 @@ def _native_env(paths: Paths) -> dict[str, str]:
         KEEP="1",
         VSETUP_ASSUME_YES="1",
     )
-    for suffix in ("FIRST_BOOT_TIMEOUT", "SHUTDOWN_TIMEOUT", "MIGRATION_TIMEOUT"):
-        legacy, generic = f"LIMULATOR_{suffix}", f"VPHONE_{suffix}"
-        if legacy in env:
-            env[generic] = env[legacy]
-        elif generic in env:
-            env[legacy] = env[generic]
+    _normalize_backend_controls(env)
     return env
 
 
@@ -727,10 +739,8 @@ class _USBHelpers:
         self.rule_created = False
         self.daemon_identity = None
         self.attach_failures = 0
-        self.trace_enabled = env.get("LIMULATOR_USB_TRACE") == "1"
-        self.trace_path = Path(
-            env.get("LIMULATOR_USB_TRACE_FILE", str(directory / "usb-transport-trace.jsonl"))
-        )
+        self.trace_enabled = env.get("VPHONE_USB_TRACE") == "1"
+        self.trace_path = Path(env.get("VPHONE_USB_TRACE_FILE", str(directory / "usb-transport-trace.jsonl")))
         self.trace_states = {}
         self.trace_warning_reported = False
 
@@ -748,6 +758,8 @@ class _USBHelpers:
         self._trace(event, **fields)
 
     def start(self):
+        self.env.pop("LIMULATOR_CREATOR_USB_READY", None)
+        self.env.pop("VPHONE_CREATOR_USB_READY", None)
         if _apple_devices():
             raise RuntimeError(
                 "Apple USB devices are already attached; creation will not take over live devices"
@@ -808,7 +820,7 @@ class _USBHelpers:
                 raise RuntimeError(f"private usbmuxd did not start; see {self.directory / 'usbmuxd.log'}")
             time.sleep(0.1)
         self._trace("host.private_usbmuxd_ready", socket_ready=True)
-        self.env["LIMULATOR_CREATOR_USB_READY"] = self.env["VPHONE_CREATOR_USB_READY"] = "1"
+        self.env["VPHONE_CREATOR_USB_READY"] = "1"
 
     def _owned_import(self, port: int) -> bool:
         expected = self.import_connections.get(port)
@@ -1344,6 +1356,7 @@ def _pipeline(
     graphics_mode: str = "strict",
 ) -> dict:
     vm = candidate.vm_path
+    _normalize_backend_controls(env)
     _require_cache_publication_complete(vm)
     specification = _creation_specification(candidate)
     state_path = vm / ".limulator-create.json"
@@ -1379,18 +1392,17 @@ def _pipeline(
     apply_graphics_environment(env, graphics_mode, run_dir / "census")
     state["graphics_policy"] = graphics_policy_metadata(graphics_mode, env)
     _atomic_json(state_path, state)
-    trace_enabled = env.get("LIMULATOR_USB_TRACE") == "1"
-    env["LIMULATOR_USB_TRACE"] = env["VPHONE_USB_TRACE"] = "1" if trace_enabled else "0"
+    trace_enabled = env.get("VPHONE_USB_TRACE") == "1"
+    env["VPHONE_USB_TRACE"] = "1" if trace_enabled else "0"
     if trace_enabled:
         trace_path = run_dir / "usb-transport-trace.jsonl"
-        env["LIMULATOR_USB_TRACE_FILE"] = env["VPHONE_USB_TRACE_FILE"] = str(trace_path)
+        env["VPHONE_USB_TRACE_FILE"] = str(trace_path)
         trace_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
         with contextlib.suppress(OSError):
             trace_fd = os.open(trace_path, trace_flags, 0o600)
             os.close(trace_fd)
         print(f"USB transport trace: {trace_path}", file=sys.stderr, flush=True)
     else:
-        env.pop("LIMULATOR_USB_TRACE_FILE", None)
         env.pop("VPHONE_USB_TRACE_FILE", None)
     for directory in (run_dir / "vsock", run_dir / "census"):
         _private_directory(directory)
@@ -1403,7 +1415,7 @@ def _pipeline(
     scope_invocation_id = None
     try:
         qmp_path = _first_boot_qmp_path(run_dir)
-        env["LIMULATOR_FIRST_BOOT_QMP"] = env["VPHONE_FIRST_BOOT_QMP"] = str(qmp_path)
+        env["VPHONE_FIRST_BOOT_QMP"] = str(qmp_path)
         state.update(run_dir=str(run_dir), first_boot_qmp=str(qmp_path))
         _atomic_json(state_path, state)
         catalog = Path.home() / ".cache/vphone"
@@ -1420,13 +1432,11 @@ def _pipeline(
         )
         script = paths.backend / "setup/create-vm.sh"
         script_source = script.read_text()
-        if not any(
-            hook in script_source for hook in ("VPHONE_CREATOR_USB_READY", "LIMULATOR_CREATOR_USB_READY")
-        ):
+        if "VPHONE_CREATOR_USB_READY" not in script_source:
             raise RuntimeError(
                 "backend sources lack scoped USB creation support; bootstrap them before creating a guest"
             )
-        if not any(hook in script_source for hook in ("VPHONE_FIRST_BOOT_QMP", "LIMULATOR_FIRST_BOOT_QMP")):
+        if "VPHONE_FIRST_BOOT_QMP" not in script_source:
             raise RuntimeError(
                 "backend sources lack the private first-boot QMP hook; bootstrap them before creating a guest"
             )

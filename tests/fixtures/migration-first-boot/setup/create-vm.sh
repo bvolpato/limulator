@@ -14,7 +14,7 @@ do_first_boot() {
   expected_build=$(python3 "$T/migration-result.py" expected-build "$VM" "$DEVICE" "$IOS" "$PAIR_BUILD") ||
     die "cannot identify the expected migration build; preserve $VM for inspection"
   boot_vm
-  local deadline=$((SECONDS + ${LIMULATOR_MIGRATION_TIMEOUT:-3600})) remaining setup_reply migration_reply verdict status
+  local deadline=$((SECONDS + ${VPHONE_MIGRATION_TIMEOUT:-3600})) remaining setup_reply migration_reply verdict status
   while true; do
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || die "first-boot migration timed out; see $VM/serial.log"

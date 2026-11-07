@@ -230,7 +230,7 @@ def test_creation_rechecks_pending_cache_under_disk_ownership_before_resume_or_h
     )
     script = fixture.runtime.paths.backend / "setup/create-vm.sh"
     script.parent.mkdir()
-    script.write_text("# LIMULATOR_CREATOR_USB_READY LIMULATOR_FIRST_BOOT_QMP\n")
+    script.write_text("# VPHONE_CREATOR_USB_READY VPHONE_FIRST_BOOT_QMP\n")
     before = _preserved_bytes(fixture)
     lock_disk = creator._lock_disk
     locks = []

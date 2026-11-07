@@ -34,6 +34,10 @@ Numbers below identify the [former patch series](https://github.com/bvolpato/lim
 
 These are proposals, not merged dependencies. The QEMU PR uses generic VirtIO and PCI trace names; the pinned `dev` source retains the VUSB-specific names of its validated build. Do not use one version's event allowlist with the other without checking `-trace help`.
 
+A later native CFW installation exposed a separate subprocess capture hang: the child had exited, but Linux Foundation omitted an EOF readability callback. [vphone-cli #856](https://github.com/Lakr233/vphone-cli/pull/856) replaces callback-based collection with concurrent pipe readers. The standalone regression reproduces the old hang and checks complete output and exit status with the replacement. This fix is separate from the former patch migration.
+
+Upstream contributions use the projects' own interfaces and terminology. The backend's public controls use `VPHONE_*`, including private USB readiness, first-boot QMP, timeouts and optional transport tracing. Limulator translates its compatibility inputs locally; upstream source does not need Limulator-specific environment variables. The integration branch combines component changes, while each upstream PR explains its own failure trigger, impact, and validation limits.
+
 ## Fixes already upstream
 
 The acquire/release (`0006`), jump-cache (`0008`) and generic-timer (`0014`) changes came from QEMU upstream commits [38c32a9](https://github.com/YahiaAngelo/qemu-vphone/commit/38c32a9bf16d92c0fd1d82b20c051cbe34a90372), [f6b3bc9](https://github.com/YahiaAngelo/qemu-vphone/commit/f6b3bc9d8ec9ba3113a4dbae9e9584775cd0d1f2), and [3e884e8](https://github.com/YahiaAngelo/qemu-vphone/commit/3e884e825cd6d545f9774c236113cfd8745e204e). The QEMU fork retains these credited backports on the tested older base. No duplicate PR is needed, and moving to the entire latest upstream tree would require broader validation.

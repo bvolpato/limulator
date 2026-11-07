@@ -110,7 +110,7 @@ vrpc() {
         "DRY": "0",
         "SCALE": "3",
         "TRIM": "0",
-        "LIMULATOR_MIGRATION_TIMEOUT": "60",
+        "VPHONE_MIGRATION_TIMEOUT": "60",
         "CALLS": str(calls),
         "COUNT": str(count),
         "SETUP_REPLY": str(setup),
