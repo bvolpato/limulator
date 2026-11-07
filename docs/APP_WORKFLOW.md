@@ -27,6 +27,8 @@ uv run limulator devices
 
 `--data` also selects the data directory. A custom data directory changes the default tool paths too, so retain `LIMULATOR_BACKEND` and `LIMULATOR_PREFIX` when sharing an existing tool installation.
 
+The selected xtool wrapper keeps using its installed Swift toolchain and SDK when the guest data directory changes. `LIMULATOR_XTOOL_CONFIG` remains available for an explicit SDK configuration override. A new guest directory does not require another Swift or SDK installation.
+
 For repeated use, those three assignments can live in an ignored `.limulator/dev.env` file. Use `uv run --env-file .limulator/dev.env limulator ...` instead of exporting them in every terminal. Keep local paths, VM disks, SDKs, and app artifacts out of Git.
 
 ## Open the native window once per session
