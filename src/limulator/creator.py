@@ -617,6 +617,50 @@ def _in_scope(pid: int, unit: str) -> bool:
         return False
 
 
+def _creation_scope_group(uid: int, unit: str) -> str:
+    return f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit}"
+
+
+def _creation_scope_cgroup(pid: int) -> str | None:
+    try:
+        groups = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+    except OSError:
+        return None
+    return groups[0] if len(groups) == 1 else None
+
+
+def _capture_creation_scope_invocation(pid: int, unit: str, env: dict[str, str]) -> str | None:
+    uid = os.getuid()
+    group = _creation_scope_group(uid, unit)
+    expected_cgroup = f"0::{group}"
+    if _creation_scope_cgroup(pid) != expected_cgroup:
+        return None
+    result = _run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            "--property=LoadState,ActiveState,InvocationID,ControlGroup",
+        ],
+        env=env,
+        timeout=5,
+    )
+    properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    invocation_id = properties.get("InvocationID", "").lower()
+    if (
+        properties.get("LoadState") != "loaded"
+        or properties.get("ActiveState") != "active"
+        or properties.get("ControlGroup") != group
+        or not re.fullmatch(r"[0-9a-f]{32}", invocation_id)
+        or invocation_id == "0" * 32
+    ):
+        raise RuntimeError(f"creation scope identity could not be established: {unit}; {properties}")
+    if _creation_scope_cgroup(pid) != expected_cgroup:
+        raise RuntimeError(f"creation launcher left its scope while capturing identity: {unit}")
+    return invocation_id
+
+
 def _signal_owned(identity: dict, value: int) -> bool:
     if not _identity_alive(identity):
         return False
@@ -646,7 +690,13 @@ def _signal_owned(identity: dict, value: int) -> bool:
 
 
 def _cleanup_creation_scope(
-    unit: str, env: dict[str, str], owner: dict, baseline: list[dict], *, scope_owned: bool
+    unit: str,
+    env: dict[str, str],
+    owner: dict,
+    baseline: list[dict],
+    *,
+    scope_owned: bool,
+    expected_invocation_id: str | None,
 ) -> None:
     _sudo(
         ["/usr/bin/python3", Path(_creation_cleanup.__file__).resolve()],
@@ -658,6 +708,7 @@ def _cleanup_creation_scope(
                 "boot_id": owner["boot_id"],
                 "baseline": baseline,
                 "scope_owned": scope_owned,
+                "expected_invocation_id": expected_invocation_id,
             }
         ),
         timeout=60,
@@ -1349,6 +1400,7 @@ def _pipeline(
     fresh_record = None
     process = None
     scope_owned = False
+    scope_invocation_id = None
     try:
         qmp_path = _first_boot_qmp_path(run_dir)
         env["LIMULATOR_FIRST_BOOT_QMP"] = env["VPHONE_FIRST_BOOT_QMP"] = str(qmp_path)
@@ -1466,7 +1518,12 @@ def _pipeline(
         deadline = time.monotonic() + 3 * 3600
         previous = None
         while process.poll() is None:
-            scope_owned = scope_owned or _in_scope(process.pid, unit)
+            if not scope_owned:
+                scope_invocation_id = _capture_creation_scope_invocation(process.pid, unit, env)
+                scope_owned = scope_invocation_id is not None
+                if scope_owned:
+                    state["scope_invocation_id"] = scope_invocation_id
+                    _atomic_json(state_path, state)
             if scope_owned and fresh_record is not None and previous_disk_fd is not None:
                 fresh_record["state"] = "restore-started"
                 _atomic_json(state_path, state)
@@ -1541,7 +1598,12 @@ def _pipeline(
             try:
                 if process is not None:
                     _cleanup_creation_scope(
-                        unit, env, state["process"], mount_baseline, scope_owned=scope_owned
+                        unit,
+                        env,
+                        state["process"],
+                        mount_baseline,
+                        scope_owned=scope_owned,
+                        expected_invocation_id=scope_invocation_id,
                     )
             except BaseException as exc:
                 cleanup_errors.append(("scope", exc))

@@ -7,6 +7,7 @@ import ctypes
 import errno
 import json
 import os
+import pwd
 import re
 import select
 import signal
@@ -102,7 +103,101 @@ def _cfw_target(target: str) -> bool:
     return re.fullmatch(r"/var/tmp/vphone-cfw\.[A-Za-z0-9]{8}/(?:system|xart|preboot)", target) is not None
 
 
-def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_owned: bool = False) -> None:
+def _unit_properties(unit: str, uid: int) -> dict[str, str]:
+    try:
+        username = pwd.getpwuid(uid).pw_name
+    except KeyError as error:
+        raise RuntimeError(f"creation scope user does not exist: {uid}") from error
+    result = subprocess.run(
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            f"--machine={username}@.host",
+            "show",
+            unit,
+            "--property=LoadState,ActiveState,InvocationID,ControlGroup",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode:
+        raise RuntimeError(f"cannot inspect creation scope for UID {uid}: {result.stderr.strip()}")
+    properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if not {"LoadState", "ActiveState", "InvocationID", "ControlGroup"} <= properties.keys():
+        raise RuntimeError(f"creation scope status is incomplete for UID {uid}: {properties}")
+    return properties
+
+
+def _inactive(properties: dict[str, str]) -> bool:
+    if properties["LoadState"] not in ("loaded", "not-found"):
+        raise RuntimeError(f"creation scope has an unexpected systemd load state: {properties}")
+    if properties["ActiveState"] in ("inactive", "failed"):
+        return True
+    if properties["ActiveState"] != "active":
+        raise RuntimeError(f"creation scope is transitioning: {properties}")
+    return False
+
+
+def _require_active_invocation(
+    properties: dict[str, str], group: str, expected_invocation_id: str | None, scope_owned: bool
+) -> None:
+    if _inactive(properties):
+        raise RuntimeError(f"creation scope became inactive before cleanup: {properties}")
+    invocation_id = properties["InvocationID"].lower()
+    if (
+        scope_owned is not True
+        or expected_invocation_id is None
+        or invocation_id != expected_invocation_id
+        or properties["ControlGroup"] != group
+    ):
+        raise RuntimeError(
+            f"creation scope identity changed; refusing cleanup: expected InvocationID="
+            f"{expected_invocation_id}, got {properties}"
+        )
+
+
+def _inactive_scope_is_empty(
+    unit: str,
+    uid: int,
+    group: str,
+    expected_invocation_id: str | None,
+    scope_owned: bool,
+    baseline_records: set[str],
+    candidate_targets: set[str],
+) -> bool:
+    properties = _unit_properties(unit, uid)
+    if not _inactive(properties):
+        _require_active_invocation(properties, group, expected_invocation_id, scope_owned)
+        return False
+    identities = _scope_processes(group)
+    before = mounts()
+    properties = _unit_properties(unit, uid)
+    if not _inactive(properties):
+        _require_active_invocation(properties, group, expected_invocation_id, scope_owned)
+        return False
+    remaining_mounts = [
+        mount
+        for mount in before
+        if mount["record"] not in baseline_records
+        and (_cfw_target(mount["target"]) or mount["target"] in candidate_targets)
+    ]
+    if identities or remaining_mounts:
+        raise RuntimeError(
+            f"inactive creation scope has residual resources: processes={identities}; mounts={remaining_mounts}"
+        )
+    return True
+
+
+def cleanup(
+    unit: str,
+    uid: int,
+    boot_id: str,
+    baseline: list[dict],
+    *,
+    scope_owned: bool = False,
+    expected_invocation_id: str | None = None,
+) -> None:
     if (
         type(uid) is not int
         or uid < 0
@@ -112,9 +207,20 @@ def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_ow
     if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != boot_id:
         raise RuntimeError("creation kernel boot identity changed")
     group = f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit}"
-    identities = _scope_processes(group)
-    before = mounts()
+    if expected_invocation_id is not None and not re.fullmatch(r"[0-9a-f]{32}", expected_invocation_id):
+        raise RuntimeError("refusing an invalid creation scope InvocationID")
     baseline_records = {mount["record"] for mount in baseline}
+    if _inactive_scope_is_empty(
+        unit, uid, group, expected_invocation_id, scope_owned, baseline_records, set()
+    ):
+        return
+    identities = _scope_processes(group)
+    candidate_targets = {target for identity in identities for target in identity["argv"]}
+    if _inactive_scope_is_empty(
+        unit, uid, group, expected_invocation_id, scope_owned, baseline_records, candidate_targets
+    ):
+        return
+    before = mounts()
     candidates = [
         mount
         for mount in before
@@ -124,12 +230,16 @@ def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_ow
             or any(mount["target"] in identity["argv"] for identity in identities)
         )
     ]
-    if scope_owned is not True:
-        if identities or candidates:
-            raise RuntimeError(
-                f"creation scope ownership was not established; refusing cleanup: "
-                f"processes={identities}; mounts={candidates}"
-            )
+    candidate_targets = {mount["target"] for mount in candidates}
+    if _inactive_scope_is_empty(
+        unit,
+        uid,
+        group,
+        expected_invocation_id,
+        scope_owned,
+        baseline_records,
+        candidate_targets,
+    ):
         return
     owned_mounts = []
     with contextlib.ExitStack() as resources:
@@ -180,14 +290,20 @@ def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_ow
             raise RuntimeError(f"creation mount ownership could not be proven: {unknown}")
         for mount, identity, directory_fd, directory_identity in owned_mounts:
             current = Path(mount["target"]).parent.lstat()
-            if (
-                (current.st_dev, current.st_ino) != directory_identity
-                or mount not in mounts()
-                or _identity(identity["pid"]) != identity
-            ):
+            if (current.st_dev, current.st_ino) != directory_identity or _identity(
+                identity["pid"]
+            ) != identity:
                 raise RuntimeError(
                     f"creation SSHFS identity changed before unmount: {identity}; mount={mount}"
                 )
+            _require_active_invocation(
+                _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
+            )
+            if mount not in mounts():
+                raise RuntimeError(f"creation SSHFS mount disappeared before unmount: {mount}")
+            _require_active_invocation(
+                _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
+            )
             result = subprocess.run(
                 ["/usr/bin/fusermount3", "-u", mount["target"]],
                 capture_output=True,
@@ -197,6 +313,9 @@ def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_ow
             if result.returncode:
                 raise RuntimeError(f"owned creation mount did not detach: {mount}; {result.stderr.strip()}")
         for value, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+            _require_active_invocation(
+                _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
+            )
             for identity, fd in pinned:
                 current = _identity(identity["pid"])
                 if current is None:
@@ -208,6 +327,16 @@ def cleanup(unit: str, uid: int, boot_id: str, baseline: list[dict], *, scope_ow
                 _signal(fd, value)
             deadline = time.monotonic() + wait
             while True:
+                if _inactive_scope_is_empty(
+                    unit,
+                    uid,
+                    group,
+                    expected_invocation_id,
+                    scope_owned,
+                    baseline_records,
+                    candidate_targets,
+                ):
+                    return
                 survivors = _scope_processes(group)
                 remaining_mounts = [
                     m

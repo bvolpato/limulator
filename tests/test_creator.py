@@ -18,6 +18,8 @@ from limulator import _creation_cleanup, creator
 from limulator.lifecycle import Device, Paths, Registry
 from limulator.profiles import FirmwareDescriptor, get_profile, list_profiles
 
+_CREATION_INVOCATION_ID = "a" * 32
+
 
 @pytest.fixture
 def catalog(tmp_path, monkeypatch):
@@ -811,7 +813,11 @@ def test_failed_creation_cleanup_blocks_recovery_even_when_disk_has_no_users(
     monkeypatch.setattr(creator, "_unit_states", lambda: {})
     monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
     monkeypatch.setattr(creator, "_disk_users", lambda *_: [])
-    monkeypatch.setattr(creator, "_in_scope", lambda *_: scope_owned)
+    monkeypatch.setattr(
+        creator,
+        "_capture_creation_scope_invocation",
+        lambda *_: _CREATION_INVOCATION_ID if scope_owned else None,
+    )
     monkeypatch.setattr(creator, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     closed = []
     real_close = creator._USBHelpers.close
@@ -873,6 +879,65 @@ def test_failed_creation_cleanup_blocks_recovery_even_when_disk_has_no_users(
     assert closed == [True]
     released = creator._lock_disk(disk)
     os.close(released)
+
+
+def test_creation_scope_invocation_capture_requires_exact_active_membership(monkeypatch):
+    unit = "limulator-create-1000-aabbccdd.scope"
+    group = creator._creation_scope_group(os.getuid(), unit)
+    expected_cgroup = f"0::{group}"
+    membership = expected_cgroup
+    monkeypatch.setattr(creator, "_creation_scope_cgroup", lambda _pid: membership)
+    invocation_id = _CREATION_INVOCATION_ID
+    result = SimpleNamespace(
+        stdout=f"LoadState=loaded\nActiveState=active\nInvocationID={invocation_id}\nControlGroup={group}\n"
+    )
+    calls = []
+
+    def show(command, **kwargs):
+        calls.append((command, kwargs))
+        return result
+
+    monkeypatch.setattr(creator, "_run", show)
+    captured = creator._capture_creation_scope_invocation(
+        4321, unit, {"DBUS_SESSION_BUS_ADDRESS": "user-bus"}
+    )
+    assert captured == invocation_id
+    assert calls == [
+        (
+            [
+                "systemctl",
+                "--user",
+                "show",
+                unit,
+                "--property=LoadState,ActiveState,InvocationID,ControlGroup",
+            ],
+            {"env": {"DBUS_SESSION_BUS_ADDRESS": "user-bus"}, "timeout": 5},
+        )
+    ]
+    membership = "0::/user.slice/other.scope"
+    assert creator._capture_creation_scope_invocation(4321, unit, {}) is None
+    assert len(calls) == 1
+
+
+def test_creation_scope_invocation_capture_refuses_unexpected_control_group(monkeypatch):
+    unit = "limulator-create-1000-aabbccdd.scope"
+    group = creator._creation_scope_group(os.getuid(), unit)
+    expected_cgroup = f"0::{group}"
+    monkeypatch.setattr(creator, "_creation_scope_cgroup", lambda _pid: expected_cgroup)
+    monkeypatch.setattr(
+        creator,
+        "_run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=(
+                "LoadState=loaded\n"
+                "ActiveState=active\n"
+                f"InvocationID={_CREATION_INVOCATION_ID}\n"
+                "ControlGroup=/user.slice/user-1000.slice/other.scope\n"
+            )
+        ),
+    )
+    with pytest.raises(RuntimeError, match="identity could not be established"):
+        creator._capture_creation_scope_invocation(4321, unit, {})
 
 
 @pytest.mark.parametrize("failure", ["scope", "private USB", None])
@@ -1029,7 +1094,11 @@ def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, s
         "Popen",
         lambda *args, **kwargs: SimpleNamespace(pid=os.getpid(), poll=lambda: 1, returncode=1),
     )
-    monkeypatch.setattr(creator, "_in_scope", lambda *_: pytest.fail("the refused launcher has exited"))
+    monkeypatch.setattr(
+        creator,
+        "_capture_creation_scope_invocation",
+        lambda *_: pytest.fail("the refused launcher has exited"),
+    )
     monkeypatch.setattr(
         _creation_cleanup,
         "_scope_processes",
@@ -1053,6 +1122,19 @@ def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, s
     mount = {"target": "/var/tmp/vphone-cfw.aabbccdd/system", "record": "surviving mount"}
     snapshots = iter([[], [mount] if survivor == "mount" else []])
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: next(snapshots))
+    inactive = survivor == "none"
+
+    def unit_properties(unit, uid):
+        return {
+            "LoadState": "not-found" if inactive else "loaded",
+            "ActiveState": "inactive" if inactive else "active",
+            "InvocationID": "0" * 32 if inactive else "b" * 32,
+            "ControlGroup": ""
+            if inactive
+            else f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit}",
+        }
+
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", unit_properties)
     monkeypatch.setattr(
         _creation_cleanup, "_pidfd", lambda *_: pytest.fail("an unproven scope must not pin processes")
     )
@@ -1071,9 +1153,7 @@ def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, s
 
     monkeypatch.setattr(creator, "_sudo", inspect_only)
     message = (
-        "upstream creation exited with status 1"
-        if survivor == "none"
-        else "scope ownership was not established"
+        "upstream creation exited with status 1" if survivor == "none" else "creation scope identity changed"
     )
     with pytest.raises(RuntimeError, match=message):
         creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
@@ -1084,7 +1164,7 @@ def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, s
     if survivor == "none":
         assert "cleanup_error" not in receipt
     else:
-        assert "scope ownership was not established" in receipt["cleanup_error"]
+        assert "creation scope identity changed" in receipt["cleanup_error"]
     assert disk.read_bytes() == original
 
 
@@ -1125,16 +1205,23 @@ def cleanup_scope(monkeypatch):
         "mount_namespace": os.readlink("/proc/self/ns/mnt"),
     }
     alive = {identity["pid"]: identity}
+    properties = {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "InvocationID": _CREATION_INVOCATION_ID,
+        "ControlGroup": group,
+    }
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", lambda *_: properties)
     monkeypatch.setattr(_creation_cleanup, "_scope_processes", lambda *_: list(alive.values()))
     monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: alive.get(pid))
     monkeypatch.setattr(_creation_cleanup, "_pidfd", lambda pid: os.open("/dev/null", os.O_RDONLY))
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [])
-    return unit, boot, identity, alive
+    return unit, boot, identity, alive, _CREATION_INVOCATION_ID
 
 
 @pytest.mark.parametrize("changed", ["start_ticks", "cgroup"])
 def test_scope_cleanup_refuses_reused_pid_or_foreign_scope(cleanup_scope, monkeypatch, changed):
-    unit, boot, identity, _ = cleanup_scope
+    unit, boot, identity, _, invocation_id = cleanup_scope
     if changed == "start_ticks":
         monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: identity | {"start_ticks": 9999})
     else:
@@ -1146,14 +1233,94 @@ def test_scope_cleanup_refuses_reused_pid_or_foreign_scope(cleanup_scope, monkey
         _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
     )
     with pytest.raises(RuntimeError, match="identity changed|outside the owned scope"):
-        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+
+
+def test_scope_cleanup_refuses_replacement_before_process_enumeration(cleanup_scope, monkeypatch):
+    unit, boot, _, _, invocation_id = cleanup_scope
+    group = f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"
+    monkeypatch.setattr(
+        _creation_cleanup,
+        "_unit_properties",
+        lambda *_: {
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "InvocationID": "b" * 32,
+            "ControlGroup": group,
+        },
+    )
+    monkeypatch.setattr(
+        _creation_cleanup, "_scope_processes", lambda *_: pytest.fail("replacement scope was enumerated")
+    )
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: pytest.fail("replacement mounts were read"))
+    with pytest.raises(RuntimeError, match="InvocationID"):
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+
+
+@pytest.mark.parametrize(
+    "replacement_phase,expected_signals",
+    [("before_term", []), ("before_kill", [creator.signal.SIGTERM])],
+)
+def test_scope_cleanup_refuses_replacement_before_signal_pass(
+    cleanup_scope, monkeypatch, replacement_phase, expected_signals
+):
+    unit, boot, identity, _, invocation_id = cleanup_scope
+    identity["exe"] = "/usr/bin/qemu-system-aarch64"
+    replaced = False
+    group = f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"
+
+    def unit_properties(*_):
+        return {
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "InvocationID": "b" * 32 if replaced else invocation_id,
+            "ControlGroup": group,
+        }
+
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", unit_properties)
+    signals = []
+    if replacement_phase == "before_term":
+
+        def pin(pid):
+            nonlocal replaced
+            replaced = True
+            return os.open("/dev/null", os.O_RDONLY)
+
+        monkeypatch.setattr(_creation_cleanup, "_pidfd", pin)
+    else:
+
+        def terminate(fd, value):
+            nonlocal replaced
+            signals.append(value)
+
+        monkeypatch.setattr(_creation_cleanup, "_signal", terminate)
+        ticks = iter([0, 6])
+
+        def monotonic():
+            nonlocal replaced
+            value = next(ticks)
+            if value == 6:
+                replaced = True
+            return value
+
+        monkeypatch.setattr(_creation_cleanup.time, "monotonic", monotonic)
+    with pytest.raises(RuntimeError, match="InvocationID"):
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+    assert signals == expected_signals
 
 
 @pytest.mark.parametrize("source", ["root@vphone:/mnt1", "root@foreign:/mnt1"])
+@pytest.mark.parametrize("replacement_at_unmount", [False, True])
 def test_scope_cleanup_requires_exact_private_sshfs_before_unmount_and_pidfd_signal(
-    cleanup_scope, tmp_path, monkeypatch, source
+    cleanup_scope, tmp_path, monkeypatch, source, replacement_at_unmount
 ):
-    unit, boot, identity, alive = cleanup_scope
+    unit, boot, identity, alive, invocation_id = cleanup_scope
     directory = tmp_path / "vphone-cfw.aabbccdd"
     directory.mkdir(mode=0o700)
     target = str(directory / "system")
@@ -1168,6 +1335,29 @@ def test_scope_cleanup_requires_exact_private_sshfs_before_unmount_and_pidfd_sig
     attached = [mount]
     monkeypatch.setattr(_creation_cleanup, "_cfw_target", lambda value: value == target)
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: list(attached))
+    replaced = False
+    mount_reads = 0
+
+    def read_mounts():
+        nonlocal replaced, mount_reads
+        mount_reads += 1
+        current = list(attached)
+        if replacement_at_unmount and mount_reads == 2:
+            replaced = True
+        return current
+
+    monkeypatch.setattr(_creation_cleanup, "mounts", read_mounts)
+
+    def unit_properties(_unit, uid):
+        group = f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit}"
+        return {
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "InvocationID": "b" * 32 if replaced else invocation_id,
+            "ControlGroup": group,
+        }
+
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", unit_properties)
     fstat = os.fstat
 
     def root_directory_metadata(fd):
@@ -1198,16 +1388,27 @@ def test_scope_cleanup_requires_exact_private_sshfs_before_unmount_and_pidfd_sig
     monkeypatch.setattr(_creation_cleanup.subprocess, "run", unmount)
     monkeypatch.setattr(_creation_cleanup, "_signal", terminate)
     if source == "root@vphone:/mnt1":
-        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
-        assert actions == ["unmount", "pidfd TERM"]
+        if replacement_at_unmount:
+            with pytest.raises(RuntimeError, match="InvocationID"):
+                _creation_cleanup.cleanup(
+                    unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+                )
+            assert actions == []
+        else:
+            _creation_cleanup.cleanup(
+                unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+            )
+            assert actions == ["unmount", "pidfd TERM"]
     else:
         with pytest.raises(RuntimeError, match="SSHFS mount identity differs"):
-            _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+            _creation_cleanup.cleanup(
+                unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+            )
         assert actions == []
 
 
 def test_scope_cleanup_refuses_mount_without_an_owned_process(cleanup_scope, monkeypatch):
-    unit, boot, _, alive = cleanup_scope
+    unit, boot, _, alive, invocation_id = cleanup_scope
     alive.clear()
     mount = {"target": "/var/tmp/vphone-cfw.aabbccdd/system", "record": "unattributed mount"}
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [mount])
@@ -1215,7 +1416,57 @@ def test_scope_cleanup_refuses_mount_without_an_owned_process(cleanup_scope, mon
         _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
     )
     with pytest.raises(RuntimeError, match="mount ownership could not be proven"):
-        _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True)
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+
+
+def test_scope_cleanup_accepts_empty_scope_that_exits_during_inspection(cleanup_scope, monkeypatch):
+    unit, boot, _, alive, invocation_id = cleanup_scope
+    alive.clear()
+    properties = {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "InvocationID": invocation_id,
+        "ControlGroup": f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}",
+    }
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", lambda *_: properties)
+
+    def scope_processes(*_):
+        properties.update(
+            LoadState="not-found", ActiveState="inactive", InvocationID="0" * 32, ControlGroup=""
+        )
+        return []
+
+    monkeypatch.setattr(_creation_cleanup, "_scope_processes", scope_processes)
+    monkeypatch.setattr(_creation_cleanup, "_signal", lambda *_: pytest.fail("empty scope must not signal"))
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("empty scope must not unmount"),
+    )
+    _creation_cleanup.cleanup(unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id)
+
+
+def test_scope_cleanup_rejects_mount_left_by_inactive_unowned_scope(cleanup_scope, monkeypatch):
+    unit, boot, _, alive, _ = cleanup_scope
+    alive.clear()
+    properties = {
+        "LoadState": "not-found",
+        "ActiveState": "inactive",
+        "InvocationID": "0" * 32,
+        "ControlGroup": "",
+    }
+    mount = {"target": "/var/tmp/vphone-cfw.aabbccdd/system", "record": "leftover mount"}
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", lambda *_: properties)
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [mount])
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("inactive unowned mount must not be detached"),
+    )
+    with pytest.raises(RuntimeError, match="inactive creation scope has residual resources"):
+        _creation_cleanup.cleanup(unit, 1000, boot, [])
 
 
 @pytest.mark.parametrize("mismatch", ["missing", "specification", "restore", "ready"])
