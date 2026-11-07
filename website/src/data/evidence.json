@@ -2,19 +2,19 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "Startup repair required",
-    "publicStatus": "Source is public. Native app validation is still in progress."
+    "detail": "Migration blocks acceptance",
+    "publicStatus": "Source is public. Diagnostic native UI has rendered; clean creation and release acceptance remain blocked."
   },
   "guest": {
-    "label": "Duo guest startup",
-    "status": "startup-repair-required",
-    "value": "Startup repair required",
-    "device": "iPhone Duo",
-    "os": "iOS 27.1",
-    "workflowValue": "Startup repair required",
-    "proofLabel": "STARTUP REPAIR",
-    "proofValue": "App validation pending",
-    "detail": "The iOS 27.1 restore and research guest installation are complete. Guest startup needs repair before native app validation can continue."
+    "label": "iPhone 16 diagnostic",
+    "status": "diagnostic-render",
+    "value": "Diagnostic UI rendered",
+    "device": "iPhone 16",
+    "os": "iOS 27.0.1",
+    "workflowValue": "Diagnostic render only",
+    "proofLabel": "DIAGNOSTIC OBSERVATION",
+    "proofValue": "Migration failed · 24A446",
+    "detail": "An iPhone 16 diagnostic guest rendered its native lock screen and BruTV login UI. BruTV was installed and verified as the frontmost app. DataMigrator still reports success: false for build 24A446; clean creation and release acceptance remain blocked."
   },
   "sample": {
     "label": "CounterLab · SDK 27.2",
@@ -25,18 +25,31 @@
   "runtime": {
     "label": "Native runtime proof",
     "status": "pending",
-    "value": "App proof pending",
-    "proofLabel": "RUNTIME VALIDATION",
-    "workflowValue": "Native app proof pending",
-    "captureValue": "Native app capture pending",
-    "detail": "CounterLab app installation, launch, input, persistence, usable guest screenshots, software posture behavior, and app-performance checks remain unverified.",
-    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. The iOS 27.1 restore and research guest installation are complete, but guest startup needs repair before native app validation can continue. CounterLab install, launch, input, persistence, software postures, usable screenshots and app-performance checks remain unverified."
+    "value": "Acceptance pending",
+    "proofLabel": "NATIVE ACCEPTANCE",
+    "workflowValue": "Diagnostic launch only",
+    "captureValue": "Diagnostic frame captured",
+    "detail": "Native input, accessibility control automation, persistence, playback, software postures, CounterLab interaction acceptance, and app-performance checks remain unverified. One iPhone 16 diagnostic render does not verify Duo or iPad behavior.",
+    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. A diagnostic iPhone 16 guest has rendered BruTV's native login UI, with the app verified as frontmost. DataMigrator still reports success: false for build 24A446. Clean creation, input, accessibility control automation, persistence, playback, app performance, and Duo/iPad runtime acceptance remain unverified."
   },
-  "workflowNote": "Debug and release sample IPAs build with SDK 27.2. The iOS restore and research guest installation are complete; guest startup needs repair before native app checks.",
+  "workflowNote": "Debug and release CounterLab IPAs build with SDK 27.2. BruTV installed, launched, and rendered on an iPhone 16 diagnostic guest; failed migration still blocks creation acceptance.",
   "faq": {
     "release": "The source repository is public as a research preview. Native app execution and device profiles are still being validated; public source availability does not establish runtime compatibility."
   },
-  "captures": [],
+  "captures": [
+    {
+      "file": "assets/native/iphone16-brutv-diagnostic-2026-11-07.png",
+      "title": "BruTV login · diagnostic capture",
+      "alt": "BruTV's native login screen on an iPhone 16 guest, with empty server, username, and password fields.",
+      "context": "Diagnostic QMP capture, 7 Nov 2026. BruTV frontmost verified. Build 24A446 retains migration success: false. Input, playback, and creation acceptance are pending.",
+      "device": "iPhone 16 · iPhone17,3",
+      "os": "iOS 27.0.1",
+      "posture": "Portrait · 1179 × 2556 px",
+      "sha256": "b14cef9ee3032342c6d3fc3cc2b16ad436bc027b692a9aed5acd5b11a2aaf3a3",
+      "provenance": "iphone16-brutv-ui-20261107/observation.png; public QMPClient.screendump format=png; launch frontmost_verified=true, PID 513",
+      "accepted": false
+    }
+  ],
   "applicationMeasurements": [],
   "microbenchmark": {
     "title": "Self-modifying code · QEMU microbenchmark",

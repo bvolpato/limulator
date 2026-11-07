@@ -23,9 +23,9 @@
     {
       "id": "iphone",
       "label": "iPhone 16",
-      "badge": "Firmware verified",
+      "badge": "Diagnostic UI observed",
       "state": "research",
-      "validation": "No standard iPhone guest has been verified.",
+      "validation": "A diagnostic guest rendered the lock screen and BruTV login UI. Clean creation and runtime acceptance remain blocked by failed migration.",
       "diagram": "portrait",
       "form": "Single display · profile candidate",
       "device": "iPhone 16",
@@ -36,8 +36,8 @@
       "scale": "3× native scale",
       "dimensions": "1179 × 2556 px",
       "postures": "Single display · runtime checks pending",
-      "note": "The iPhone 16 firmware package has passed its size and SHA-256 checks. Guest startup and native app behavior are not yet verified.",
-      "source": "Catalog profile · verified firmware"
+      "note": "Firmware passed its size and SHA-256 checks. A diagnostic iPhone 16 guest rendered native UI at 1179 × 2556 px on iOS 27.0.1. DataMigrator reports success: false for build 24A446. Input, playback, and clean creation remain unverified.",
+      "source": "Diagnostic guest · acceptance pending"
     },
     {
       "id": "ipad",

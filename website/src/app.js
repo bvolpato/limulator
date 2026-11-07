@@ -252,10 +252,12 @@ function renderCaptures(captures = []) {
   validCaptures.forEach((capture) => {
     const figure = document.createElement("figure");
     figure.className = "capture-card";
-    const imageWrap = document.createElement("div");
+    const imageWrap = document.createElement("a");
     imageWrap.className = "capture-image-wrap";
+    imageWrap.href = new URL(capture.file, document.baseURI).href;
+    imageWrap.title = "Open original PNG at full resolution";
     const image = document.createElement("img");
-    image.src = new URL(capture.file, document.baseURI).href;
+    image.src = imageWrap.href;
     image.alt = capture.alt || `${capture.title || "Native guest frame"}${capture.posture ? `, ${capture.posture} posture` : ""}`;
     image.loading = "lazy";
     image.decoding = "async";
@@ -303,7 +305,7 @@ function renderHeroCapture(captures = []) {
     profileNode.hidden = !profile;
     contextNode.textContent = capture.context || "";
     contextNode.hidden = !capture.context;
-    schematic.hidden = true;
+    schematic.toggleAttribute("hidden", true);
     figure.hidden = false;
     caption.hidden = true;
     setText("[data-hero-visual-kind]", "GUEST FRAME / 01");
@@ -319,7 +321,7 @@ function renderHeroCapture(captures = []) {
       image.removeAttribute("src");
       image.alt = "";
       figure.hidden = true;
-      schematic.hidden = false;
+      schematic.toggleAttribute("hidden", false);
       caption.hidden = false;
       setText("[data-hero-visual-kind]", "DEVICE PROFILE / 01");
       setText("[data-hero-visual-mode]", "SCHEMATIC");
