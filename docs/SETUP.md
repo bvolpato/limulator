@@ -51,6 +51,8 @@ The creator preserves incomplete images and resumes completed stages. It uses a 
 
 If host verification fails after first boot, rerun the same `create` command. For a matching incomplete, unregistered guest, Limulator preserves the previous stage record and reruns boot and verification while keeping restore and guest installation complete. It refuses this recovery while another process owns the disk. Use `start` for a guest that is already registered.
 
+An interrupted dyld-cache patch needs an integrity check before repair. With the guest stopped and its System volume mounted read-only, run `uv run tools/audit_dyld_cache.py /path/to/dyld_shared_cache_arm64e_x1`. The tool checks SHA-256 code-page slots in the main cache and its declared subcaches, reports coverage and mismatches as JSON, and fails on unsupported or incomplete input. It records the unsigned `.atlas` metadata separately. It does not validate CMS trust, certify original instructions, or change cache bytes. A successful page audit alone does not establish app compatibility.
+
 If an interrupted restore leaves partial APFS media and a later attempt reports `newfs_apfs: /dev/disk1 is already a synthesized APFS device: Resource busy`, the explicit recovery option is:
 
 ```sh
