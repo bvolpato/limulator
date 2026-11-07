@@ -48,18 +48,16 @@ def _build_project(paths: Paths, args: argparse.Namespace) -> Path:
 
 
 def doctor(paths: Paths) -> dict:
+    from .creator import _native_env
+
+    environment = _native_env(paths)
     tools = {
         "qemu": paths.backend / "qemu/build/qemu-system-aarch64",
-        "firmware_cli": paths.backend / "linux-create/vphone-cli",
+        "firmware_cli": Path(environment["VC"]),
         "usbmuxd": paths.backend / ".build/usbmuxd-32k/usbmuxd",
         "apfs": paths.backend / ".build/linux-apfs-rw/apfs.ko",
     }
     checks = {name: path.exists() for name, path in tools.items()}
-    environment = os.environ | {
-        "LD_LIBRARY_PATH": ":".join(
-            (str(paths.prefix / "lib"), str(paths.prefix / "lib64"), os.environ.get("LD_LIBRARY_PATH", ""))
-        )
-    }
     probes = {
         "qemu_machine": ([str(tools["qemu"]), "-machine", "help"], "vresearch101"),
         "gpu_device": ([str(tools["qemu"]), "-device", "apple-gfx-mmio,help"], "apple-gfx-mmio"),

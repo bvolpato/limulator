@@ -1,9 +1,10 @@
 import os
+import platform
 import subprocess
 
 import pytest
 
-from limulator import creator
+from limulator import cli, creator
 from limulator.lifecycle import Device, Paths
 from limulator.profiles import get_profile
 
@@ -42,6 +43,67 @@ def _executable(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     path.chmod(0o755)
+
+
+def _doctor_paths(tmp_path, monkeypatch):
+    backend = tmp_path / "backend"
+    prefix = tmp_path / "tools"
+    monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
+    monkeypatch.setenv("LIMULATOR_PREFIX", str(prefix))
+    paths = Paths(tmp_path / "data")
+    wrapper = backend / "linux-create/vphone-cli"
+    wrapper_marker = tmp_path / "wrapper-ran"
+    _executable(
+        wrapper,
+        f"#!/bin/sh\nprintf stale-wrapper > '{wrapper_marker}'\nprintf 'vphone stale wrapper\\n'\n",
+    )
+    release = backend / f"linux-create/.build/out/out/Products/Release-linux-{platform.machine()}/vphone-cli"
+    return paths, wrapper_marker, release
+
+
+def _stub_doctor_host_probes(monkeypatch):
+    original_run = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if command == ["systemctl", "--user", "show-environment"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
+
+
+def test_doctor_reports_missing_release_product_without_running_stale_wrapper(tmp_path, monkeypatch):
+    paths, wrapper_marker, release = _doctor_paths(tmp_path, monkeypatch)
+    _stub_doctor_host_probes(monkeypatch)
+
+    result = cli.doctor(paths)
+
+    assert result["tools"]["firmware_cli"] == release
+    assert result["checks"]["firmware_cli"] is False
+    assert result["checks"]["firmware_cli_runs"] is False
+    assert not wrapper_marker.exists()
+
+
+def test_doctor_runs_the_actual_release_product(tmp_path, monkeypatch):
+    paths, wrapper_marker, release = _doctor_paths(tmp_path, monkeypatch)
+    release_marker = tmp_path / "release-ran"
+    _executable(
+        release,
+        "#!/bin/sh\n"
+        'printf release > "$LIMULATOR_DOCTOR_RELEASE_MARKER"\n'
+        "printf 'vphone release product\\n'\n",
+    )
+    monkeypatch.setenv("LIMULATOR_DOCTOR_RELEASE_MARKER", str(release_marker))
+    _stub_doctor_host_probes(monkeypatch)
+
+    result = cli.doctor(paths)
+
+    assert result["tools"]["firmware_cli"] == release
+    assert result["checks"]["firmware_cli"] is True
+    assert result["checks"]["firmware_cli_runs"] is True
+    assert release_marker.read_text() == "release"
+    assert not wrapper_marker.exists()
 
 
 def test_backend_cli_bootstrap_requests_release_configuration(tmp_path):
