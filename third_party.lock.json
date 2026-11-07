@@ -135,7 +135,7 @@
     },
     {
       "path": "patches/0015-linux-stage-dyld-cache.patch",
-      "sha256": "74cf73e33d73fec0a65b6ad79bd6051f47b1b62ab63730cfcd4d95a7f5f798a4",
+      "sha256": "92b65576be2acbfe80dc585be7f80a426fd155d694fb699362016903b73a226c",
       "target": "backend"
     },
     {

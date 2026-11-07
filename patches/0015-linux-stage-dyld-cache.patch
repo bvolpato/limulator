@@ -11,10 +11,10 @@ index 199bbb9..5611fb1 100644
  )
 diff --git a/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift b/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift
 new file mode 100644
-index 0000000..4fb5047
+index 0000000..f8ddf0b
 --- /dev/null
 +++ b/linux-create/Tests/VPhoneStagedDyldCacheTests/StagedDyldCacheTests.swift
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,518 @@
 +import Foundation
 +import Glibc
 +import VLCryptoKit
@@ -27,6 +27,7 @@ index 0000000..4fb5047
 +        var sync: ((Int32) -> Int32)?
 +        var create: ((Int32, String, Int32, mode_t) -> Int32)?
 +        var journalSync: ((Int32) -> Int32)?
++        var guestBytesRead = 0
 +    }
 +
 +    struct Fixture {
@@ -39,10 +40,11 @@ index 0000000..4fb5047
 +        let stage: VPhoneStagedDyldCache
 +        let pending: VPhoneStagedDyldCache.PendingPublication
 +        let faults: Faults
++        let seed: VPhoneConfinedDirectory?
 +        let main = "dyld_shared_cache_arm64e"
 +    }
 +
-+    func fixture(undo: Bool = true) throws -> Fixture {
++    func fixture(undo: Bool = true, seedContents: Data? = nil) throws -> Fixture {
 +        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 +        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 +        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
@@ -56,15 +58,30 @@ index 0000000..4fb5047
 +        try remote.writeFile("dyld_shared_cache_arm64e.symbols", contents: Data("symbols".utf8), mode: 0o640)
 +        if undo { try remote.writeFile(VPhoneStagedDyldCache.undoName, contents: Data("old undo".utf8), mode: 0o600) }
 +        let faults = Faults()
++        var seed: VPhoneConfinedDirectory?
++        if let seedContents {
++            let directory = try workDirectory.directory("seed", create: true, mode: 0o700)
++            try directory.writeFile("dyld_shared_cache_arm64e", contents: seedContents, mode: 0o400)
++            try directory.writeFile("dyld_shared_cache_arm64e.symbols", contents: Data("symbols".utf8), mode: 0o400)
++            seed = directory
++        }
 +        let pending = try VPhoneStagedDyldCache.PendingPublication(bundleDirectory: bundle, sync: { faults.journalSync?($0) ?? Glibc.fsync($0) })
 +        var io = VPhoneStagedDyldCache.IO()
++        let remotePath = try remote.path
++        io.read = { descriptor, bytes, count, offset in
++            let result = Glibc.pread(descriptor, bytes, count, offset)
++            var path = [CChar](repeating: 0, count: 4096)
++            if result > 0, readlink("/proc/self/fd/\(descriptor)", &path, path.count - 1) > 0,
++               String(cString: path).hasPrefix(remotePath + "/") { faults.guestBytesRead += result }
++            return result
++        }
 +        io.write = { faults.write?($0, $1, $2, $3) ?? Glibc.pwrite($0, $1, $2, $3) }
 +        io.sync = { faults.sync?($0) ?? Glibc.fsync($0) }
 +        io.create = { faults.create?($0, $1, $2, $3) ?? Glibc.openat($0, $1, $2, $3) }
 +        let stage = try VPhoneStagedDyldCache(source: remote, directory: work, mainName: "dyld_shared_cache_arm64e", pending: pending,
-+                                            workDirectory: workDirectory, workParent: directory, verify: { _, _ in }, io: io)
++                                            workDirectory: workDirectory, workParent: directory, seed: seed, verify: { _, _ in }, io: io)
 +        return Fixture(root: root, remote: remote, bundle: bundle, work: work, workDirectory: workDirectory, workParent: directory,
-+                       stage: stage, pending: pending, faults: faults)
++                       stage: stage, pending: pending, faults: faults, seed: seed)
 +    }
 +
 +    func modify(_ fixture: Fixture, undo: Bool = true) throws {
@@ -74,6 +91,72 @@ index 0000000..4fb5047
 +
 +    func manifest(_ fixture: Fixture) throws -> VPhoneStagedDyldCache.Manifest {
 +        try JSONDecoder().decode(VPhoneStagedDyldCache.Manifest.self, from: fixture.work.readData("manifest.json"))
++    }
++
++    func testSeedAvoidsGuestReadsUntilPublicationAndKeepsDestinationSeparate() throws {
++        let f = try fixture(undo: false, seedContents: Data("abcdefgh".utf8))
++        XCTAssertEqual(f.faults.guestBytesRead, 0)
++        try modify(f)
++        try f.stage.publish(validateUndo: { _ in }, synchronizeGuest: {})
++        XCTAssertGreaterThanOrEqual(f.faults.guestBytesRead, 15)
++        XCTAssertEqual(try f.remote.readData(f.main), Data("ABCDEFGH".utf8))
++        XCTAssertEqual(try XCTUnwrap(f.seed).readData(f.main), Data("abcdefgh".utf8))
++        XCTAssertEqual(try f.remote.openRegularFile(f.main).mode & 0o777, 0o640)
++        XCTAssertEqual(try Data(contentsOf: f.stage.beforeURL.appendingPathComponent(f.main)), Data("abcdefgh".utf8))
++    }
++
++    func testDifferentSeedBytesRefusePublicationBeforeJournalOrWrites() throws {
++        let f = try fixture(undo: false, seedContents: Data("DIFFERNT".utf8))
++        XCTAssertEqual(f.faults.guestBytesRead, 0)
++        XCTAssertThrowsError(try f.stage.publish(validateUndo: { _ in }, synchronizeGuest: {}))
++        XCTAssertGreaterThanOrEqual(f.faults.guestBytesRead, 8)
++        XCTAssertEqual(try f.remote.readData(f.main), Data("abcdefgh".utf8))
++        XCTAssertFalse(try f.bundle.exists(VPhoneStagedDyldCache.pendingName))
++    }
++
++    func testNoSeedStillReadsGuestBaselineAndPreservesExistingUndo() throws {
++        let f = try fixture()
++        XCTAssertGreaterThanOrEqual(f.faults.guestBytesRead, 23)
++        XCTAssertEqual(try Data(contentsOf: f.stage.beforeURL.appendingPathComponent(VPhoneStagedDyldCache.undoName)), Data("old undo".utf8))
++        XCTAssertThrowsError(try fixture(seedContents: Data("abcdefgh".utf8)))
++    }
++
++    func testPreparedSeedRetainsSelectedFamilyAfterOriginIsRemoved() throws {
++        let f = try fixture(undo: false)
++        let origin = try f.workDirectory.directory("origin", create: true, mode: 0o700)
++        let seed = try f.workDirectory.directory("prepared", create: true, mode: 0o700)
++        try origin.writeFile(f.main, contents: signedCache(), mode: 0o400)
++        try origin.writeFile(f.main + ".symbols", contents: Data("symbols".utf8), mode: 0o400)
++        try origin.writeFile(f.main + ".atlas", contents: Data("atlas".utf8), mode: 0o400)
++        try origin.writeFile(f.main + "_x1", contents: Data("other architecture".utf8), mode: 0o400)
++        XCTAssertTrue(try VPhoneStagedDyldCache.prepareSeed(from: origin, in: seed, mainName: f.main,
++                                                          workDirectory: f.workDirectory, workParent: f.workParent))
++        try f.workDirectory.removeItem("origin")
++        XCTAssertEqual(try seed.entries().sorted(), [f.main, f.main + ".atlas", f.main + ".symbols"])
++        XCTAssertEqual(try seed.readData(f.main), signedCache())
++        try VPhoneDyldCacheAudit.verify(URL(fileURLWithPath: seed.path), f.main)
++    }
++
++    func testLowSpaceSkipsSeedPayloadAndKeepsGuestStagingAvailable() throws {
++        let f = try fixture(undo: false)
++        let seed = try f.workDirectory.directory("low-space-seed", create: true, mode: 0o700)
++        let baselineBytes: UInt64 = 15
++        let oldPathFits = baselineBytes * 4 + (1 << 30) + 1
++        XCTAssertFalse(try VPhoneStagedDyldCache.prepareSeed(
++            from: f.remote, in: seed, mainName: f.main, workDirectory: f.workDirectory,
++            workParent: f.workParent, availableBytes: oldPathFits,
++        ))
++        XCTAssertTrue(try seed.entries().isEmpty)
++        XCTAssertEqual(try f.remote.readData(f.main), Data("abcdefgh".utf8))
++        // A new unseeded stager can still capture the guest and publish.
++        let fallback = try f.workDirectory.directory("fallback-stage", create: true, mode: 0o700)
++        let stage = try VPhoneStagedDyldCache(source: f.remote, directory: fallback, mainName: f.main, pending: f.pending,
++                                            workDirectory: f.workDirectory, workParent: f.workParent, verify: { _, _ in }, io: .init())
++        try Data("ABCDEFGH".utf8).write(to: stage.afterURL.appendingPathComponent(f.main))
++        try stage.publish(validateUndo: { _ in }, synchronizeGuest: {})
++        XCTAssertEqual(try f.remote.readData(f.main), Data("ABCDEFGH".utf8))
++        XCTAssertNil(VPhoneStagedDyldCache.seedSpaceRequired(for: UInt64.max))
++        XCTAssertNil(VPhoneStagedDyldCache.seedSpaceRequired(for: UInt64.max / 5))
 +    }
 +
 +    func testChangedOnlyUndoLastAndInodeMetadataPreserved() throws {
@@ -463,7 +546,7 @@ index 5195f8e..7777fe6 100644
  Firmware/VPhoneCustomFirmwareInstaller.swift	s/private func configuredGuestDevice/func configuredGuestDevice/
  Firmware/VPhoneCustomFirmwareInstaller.swift	s/private func guestDevice/func guestDevice/
 diff --git a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
-index 7bd368f..8547d29 100644
+index 7bd368f..364d4dc 100644
 --- a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
 +++ b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstaller.swift
 @@ -131,6 +131,10 @@ struct VPhoneCustomFirmwareInstaller {
@@ -544,7 +627,29 @@ index 7bd368f..8547d29 100644
      /// This `VPhone.bundle`'s version, for the receipt, or nil for a plain
      /// `swift build` of `vphone-cli` with no bundle Info.plist beside it.
      private var bundleVersion: String? {
-@@ -1521,7 +1541,39 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -1342,6 +1362,7 @@ struct VPhoneCustomFirmwareInstaller {
+         kernelPatches: Set<String>?,
+         environmentOnly: Bool,
+         strict: Bool = false,
++        freshDyldSeed: Bool = false,
+     ) throws -> Set<String> {
+         var live = Set<String>()
+         var failures: [String] = []
+@@ -1450,8 +1471,12 @@ struct VPhoneCustomFirmwareInstaller {
+             }
+         }
+ 
++        var dyldSeed: VPhoneConfinedDirectory?
+         if let restore {
+-            try installCryptexes(restore: restore, system: system, work: work, owner: owner, replaceExisting: strict)
++            dyldSeed = try installCryptexes(
++                restore: restore, system: system, work: work, owner: owner, replaceExisting: strict,
++                captureDyldSeed: freshDyldSeed && guestDevice.family == .iPhone,
++            )
+         }
+         let version = try productVersion(system: system)
+ 
+@@ -1521,7 +1546,40 @@ struct VPhoneCustomFirmwareInstaller {
              ? "System/Library/Caches/com.apple.dyld"
              : "System/Cryptexes/OS/System/Library/Caches/com.apple.dyld"
          let cacheArchitecture = guestDevice.hasPlainArm64Userland ? "arm64" : "arm64e"
@@ -566,6 +671,7 @@ index 7bd368f..8547d29 100644
 +            pending: pendingPublication,
 +            workDirectory: work.directory,
 +            workParent: work.parent,
++            seed: dyldSeed,
 +        )
 +        func validateStagedUndo(_ directory: URL) throws {
 +            let undo = directory.appendingPathComponent(Self.dscUndoLogLeaf)
@@ -585,7 +691,7 @@ index 7bd368f..8547d29 100644
          let widenedRegion = kernelPatches.map { $0.contains("kernel-boot-shared_region_size") }
              ?? version.hasPrefix("27.")
          let kernelRegionSize = widenedRegion
-@@ -1550,7 +1602,8 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -1550,7 +1608,8 @@ struct VPhoneCustomFirmwareInstaller {
              // pair or describe it as unchanged via isolate's catch-and-continue.
              let applied = try updateTVDyld(
                  identifier: identifier, enabled: enabled, system: system, work: work,
@@ -595,7 +701,7 @@ index 7bd368f..8547d29 100644
                  priorApplied: priorGuest.contains(identifier),
              )
              if applied { live.insert(identifier) }
-@@ -1756,11 +1809,20 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -1756,11 +1815,20 @@ struct VPhoneCustomFirmwareInstaller {
              ("dyld-exp-hv_vmm", "patch-hv-vmm-dsc", [dsc]),
              ("dyld-cfw-camera", "patch-camera-dsc", [dsc, DyldSharedCacheChunkSet.mainCacheURL(in: URL(fileURLWithPath: dsc)).path]),
          ]
@@ -617,7 +723,7 @@ index 7bd368f..8547d29 100644
  
          // The feature plist exists from iOS 26. Turning the patch off restores
          // the original.
-@@ -2489,8 +2551,7 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -2489,8 +2557,7 @@ struct VPhoneCustomFirmwareInstaller {
          return plan
      }
  
@@ -627,7 +733,57 @@ index 7bd368f..8547d29 100644
      /// files in it, and hand the tools that verified path. The path is
      /// stable: the volume is mounted inside the root-only work folder and
      /// nothing else writes to it during the install.
-@@ -4042,15 +4103,17 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -2516,7 +2583,9 @@ struct VPhoneCustomFirmwareInstaller {
+         work: WorkDirectory,
+         owner: uid_t?,
+         replaceExisting: Bool = false,
+-    ) throws {
++        captureDyldSeed: Bool = false,
++    ) throws -> VPhoneConfinedDirectory? {
++        var seed: VPhoneConfinedDirectory?
+         let os = "System/Cryptexes/OS"
+         let app = "System/Cryptexes/App"
+         func populated(_ path: String) throws -> Bool {
+@@ -2553,7 +2622,7 @@ struct VPhoneCustomFirmwareInstaller {
+             try restore.readData("iPhone-BuildManifest.plist").write(to: manifest)
+             guard case let .cryptex(paths) = try CustomFirmwareDaemons.filesystemLayout(buildManifest: manifest) else {
+                 print("[*] Monolithic tvOS system image: no cryptex files to install")
+-                return
++                return nil
+             }
+             // Root attaches and decrypts only private copies of the images,
+             // taken from descriptors verified to be the caller's own files.
+@@ -2622,6 +2691,21 @@ struct VPhoneCustomFirmwareInstaller {
+                 // mounted nosuid, and the copy never follows a link.
+                 try system.removeItem(destination)
+                 try system.copyTree(from: source, to: destination, clearSetID: false)
++                #if os(Linux)
++                if captureDyldSeed, destination == os {
++                    let cache = try source.directory("System/Library/Caches/com.apple.dyld")
++                    let main = DyldSharedCacheChunkSet.mainCacheURL(in: URL(fileURLWithPath: try cache.path))
++                    let directory = try work.directory.directory("dyld-source-seed", create: true, mode: 0o700)
++                    if try VPhoneStagedDyldCache.prepareSeed(
++                        from: cache, in: directory, mainName: main.lastPathComponent,
++                        workDirectory: work.directory, workParent: work.parent,
++                    ) {
++                        seed = directory
++                    } else {
++                        try work.directory.removeItem("dyld-source-seed")
++                    }
++                }
++                #endif
+             }
+             try detachImage(at: appMount, attachment: appAttachment ?? "")
+             appAttachment = nil
+@@ -2636,6 +2720,7 @@ struct VPhoneCustomFirmwareInstaller {
+             target: "../../../../System/Cryptexes/OS/System/DriverKit/System/Library/dyld",
+             at: "System/DriverKit/System/Library/dyld",
+         )
++        return seed
+     }
+ 
+     /// Full OTA chunks contain placeholders, not the removable apps retained
+@@ -4042,15 +4127,17 @@ struct VPhoneCustomFirmwareInstaller {
          work: WorkDirectory,
          cacheDirectory: URL,
          cacheRelative: String,
@@ -647,7 +803,7 @@ index 7bd368f..8547d29 100644
              : nil
          let hasUndo = undo?.patchIDs.contains(identifier) == true
          if !enabled, !priorApplied, !hasUndo { return false }
-@@ -4080,7 +4143,7 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -4080,7 +4167,7 @@ struct VPhoneCustomFirmwareInstaller {
              if let captured = chunks.takeUndoLog(),
                 let merged = DyldSharedCacheUndoLog.updated(existing: undo, captured: captured, patchID: identifier)
              {
@@ -656,7 +812,7 @@ index 7bd368f..8547d29 100644
              }
              try system.replaceFile(path, fromFileAt: staged, mode: 0o755, owner: Self.guestOwner)
              return true
-@@ -4097,7 +4160,7 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -4097,7 +4184,7 @@ struct VPhoneCustomFirmwareInstaller {
              try system.replaceFile(path, fromFileAt: work.file("dyld-tv-original"), mode: 0o755, owner: Self.guestOwner)
          } retireUndo: {
              guard let undo, hasUndo else { return }
@@ -665,7 +821,7 @@ index 7bd368f..8547d29 100644
          }
          print("  [+] \(identifier): restored standalone and cached dyld")
          return false
-@@ -4300,6 +4363,7 @@ struct VPhoneCustomFirmwareInstaller {
+@@ -4300,6 +4387,7 @@ struct VPhoneCustomFirmwareInstaller {
              name: (path as NSString).lastPathComponent,
              url: URL(fileURLWithPath: path, isDirectory: true),
              directory: directory,
@@ -674,7 +830,7 @@ index 7bd368f..8547d29 100644
      }
  
 diff --git a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
-index c5a923e..efd3bca 100644
+index c5a923e..c983532 100644
 --- a/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
 +++ b/linux-create/overlay/VPhoneCommand/Firmware/VPhoneCustomFirmwareInstallerLinux.swift
 @@ -67,8 +67,19 @@ extension VPhoneCustomFirmwareInstaller {
@@ -699,7 +855,15 @@ index c5a923e..efd3bca 100644
  
          let system = work.file("system")
          let xart = work.file("xart")
-@@ -206,12 +217,14 @@ extension VPhoneCustomFirmwareInstaller {
+@@ -124,6 +135,7 @@ extension VPhoneCustomFirmwareInstaller {
+                 priorGuest: priorGuest,
+                 kernelPatches: receiptKernel,
+                 environmentOnly: false,
++                freshDyldSeed: !wasInstalled && receiptGuest == nil && priorGuest.isEmpty,
+             )
+         case .environmentOnly:
+             guard wasInstalled else {
+@@ -206,12 +218,14 @@ extension VPhoneCustomFirmwareInstaller {
              work: work,
              owner: invokingUser.map { ($0.uid, $0.gid) },
          )
@@ -914,10 +1078,10 @@ index 0000000..8b1313e
 +#endif
 diff --git a/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift b/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift
 new file mode 100644
-index 0000000..0035bb1
+index 0000000..1b73099
 --- /dev/null
 +++ b/linux-create/overlay/VPhoneCoreKit/Process/VPhoneStagedDyldCache.swift
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,503 @@
 +#if os(Linux)
 +import CryptoKit
 +import Foundation
@@ -935,6 +1099,7 @@ index 0000000..0035bb1
 +    }
 +
 +    struct IO {
++        var read: (Int32, UnsafeMutableRawPointer, Int, off_t) -> Int = { Glibc.pread($0, $1, $2, $3) }
 +        var write: (Int32, UnsafeRawPointer, Int, off_t) -> Int = { Glibc.pwrite($0, $1, $2, $3) }
 +        var sync: (Int32) -> Int32 = { Glibc.fsync($0) }
 +        var create: (Int32, String, Int32, mode_t) -> Int32 = { Glibc.openat($0, $1, $2, $3) }
@@ -1096,15 +1261,17 @@ index 0000000..0035bb1
 +        mainName: String,
 +        pending: PendingPublication,
 +        workDirectory: VPhoneConfinedDirectory,
-+        workParent: VPhoneConfinedDirectory
++        workParent: VPhoneConfinedDirectory,
++        seed: VPhoneConfinedDirectory? = nil
 +    ) throws {
 +        try self.init(source: source, directory: directory, mainName: mainName, pending: pending,
 +                      workDirectory: workDirectory, workParent: workParent,
-+                      verify: VPhoneDyldCacheAudit.verify, io: IO())
++                      seed: seed, verify: VPhoneDyldCacheAudit.verify, io: IO())
 +    }
 +
 +    init(source: VPhoneConfinedDirectory, directory: VPhoneConfinedDirectory, mainName: String, pending: PendingPublication,
 +         workDirectory: VPhoneConfinedDirectory, workParent: VPhoneConfinedDirectory,
++         seed: VPhoneConfinedDirectory? = nil,
 +         verify: @escaping (URL, String) throws -> Void, io: IO) throws {
 +        guard mainName.hasPrefix("dyld_shared_cache_"), !mainName.contains("/"),
 +              !mainName.contains("."), !mainName.isEmpty else { throw Failure("Unsafe main cache name") }
@@ -1122,6 +1289,11 @@ index 0000000..0035bb1
 +        afterURL = URL(fileURLWithPath: try after.path)
 +        manifest = Manifest(state: "copying", before: [:], after: [:], published: [])
 +        let names = try familyNames(in: source)
++        if let seed {
++            guard !names.contains(Self.undoName), try familyNames(in: seed) == names else {
++                throw Failure("Seed family differs from the fresh guest cache inventory")
++            }
++        }
 +        guard names.contains(mainName) else { throw Failure("Missing main cache \(mainName)") }
 +        var bytes: UInt64 = 0
 +        for name in names {
@@ -1142,13 +1314,15 @@ index 0000000..0035bb1
 +        else { throw Failure("Insufficient local space for before/after cache and undo growth") }
 +        try saveManifest()
 +        for name in names {
-+            let file = identities[name]!
++            let guest = identities[name]!
++            let file = try seed?.openRegularFile(name, requireSingleLink: true) ?? guest
++            guard file.size == guest.size else { throw Failure("Seed size differs from guest cache: \(name)") }
 +            var metadata = stat()
 +            guard fstat(file.descriptor, &metadata) == 0, metadata.st_size == file.size else { throw systemError(name) }
 +            let original = try copy(file.descriptor, size: Int64(file.size), to: before, name: name)
 +            let saved = try before.openRegularFile(name, requireSingleLink: true)
 +            guard try fingerprint(saved.descriptor, name: name) == original,
-+                  unchanged(file.descriptor, since: metadata)
++                  Self.unchanged(file.descriptor, since: metadata)
 +            else { throw Failure("Cache changed or short copy while staging \(name)") }
 +            _ = try copy(saved.descriptor, size: original.size, to: after, name: name)
 +            let staged = try after.openRegularFile(name, requireSingleLink: true)
@@ -1164,6 +1338,65 @@ index 0000000..0035bb1
 +        try verify(beforeURL, mainName)
 +        manifest.state = "staged"
 +        try saveManifest()
++    }
++
++    /// Capture only the selected family from the verified private read-only OS
++    /// image. This local input never becomes the publication destination.
++    public static func prepareSeed(
++        from source: VPhoneConfinedDirectory, in directory: VPhoneConfinedDirectory,
++        mainName: String, workDirectory: VPhoneConfinedDirectory, workParent: VPhoneConfinedDirectory
++    ) throws -> Bool {
++        var space = statvfs()
++        guard fstatvfs(workDirectory.descriptor, &space) == 0 else {
++            throw Failure("Seed statvfs: \(String(cString: strerror(errno)))")
++        }
++        let (available, overflow) = UInt64(space.f_bavail).multipliedReportingOverflow(by: UInt64(space.f_frsize))
++        guard !overflow else { return false }
++        return try prepareSeed(from: source, in: directory, mainName: mainName, workDirectory: workDirectory,
++                               workParent: workParent, availableBytes: available)
++    }
++
++    static func seedSpaceRequired(for bytes: UInt64) -> UInt64? {
++        let (families, overflow) = bytes.multipliedReportingOverflow(by: 5)
++        let (required, reserveOverflow) = families.addingReportingOverflow(1 << 30)
++        return overflow || reserveOverflow ? nil : required
++    }
++
++    static func prepareSeed(
++        from source: VPhoneConfinedDirectory, in directory: VPhoneConfinedDirectory,
++        mainName: String, workDirectory: VPhoneConfinedDirectory, workParent: VPhoneConfinedDirectory,
++        availableBytes: UInt64
++    ) throws -> Bool {
++        guard try directory.entries().isEmpty else { throw Failure("Seed directory is not empty") }
++        let names = try source.entries().filter { $0 == mainName || $0.hasPrefix(mainName + ".") }.sorted()
++        guard names.contains(mainName), try !source.exists(undoName) else { throw Failure("Source is not a pristine cache seed") }
++        var bytes: UInt64 = 0
++        for name in names {
++            let file = try source.openRegularFile(name, requireSingleLink: true)
++            guard file.size > 0 else { throw Failure("Empty cache seed file: \(name)") }
++            let (total, overflow) = bytes.addingReportingOverflow(UInt64(file.size))
++            guard !overflow else { return false }
++            bytes = total
++        }
++        // The optional extra family must leave the existing stager's full
++        // 4B + 1 GiB reserve available. Otherwise keep the original guest path.
++        guard let required = seedSpaceRequired(for: bytes), availableBytes > required else { return false }
++        for name in names {
++            let original = try source.openRegularFile(name, requireSingleLink: true)
++            let expected = try fingerprint(original.descriptor, name: name, io: IO())
++            try source.copyFile(from: name, to: name, in: directory)
++            let copied = try directory.openRegularFile(name, requireSingleLink: true)
++            guard try fingerprint(copied.descriptor, name: name, io: IO()) == expected,
++                  try fingerprint(original.descriptor, name: name, io: IO()) == expected else {
++                throw Failure("Seed copy verification failed: \(name)")
++            }
++            guard fsync(copied.descriptor) == 0 else { throw Failure("Seed file fsync: \(String(cString: strerror(errno)))") }
++        }
++        try VPhoneDyldCacheAudit.verify(URL(fileURLWithPath: directory.path), mainName)
++        guard fsync(directory.descriptor) == 0, fsync(workDirectory.descriptor) == 0, fsync(workParent.descriptor) == 0 else {
++            throw Failure("Seed directory durability failed: \(String(cString: strerror(errno)))")
++        }
++        return true
 +    }
 +
 +    /// Validate the whole family before the first remote write. Existing
@@ -1282,7 +1515,8 @@ index 0000000..0035bb1
 +        var offset: Int64 = 0
 +        var hasher = SHA256()
 +        while offset < size {
-+            let count = pread(input, &buffer, min(buffer.count, Int(size - offset)), off_t(offset))
++            let length = min(buffer.count, Int(size - offset))
++            let count = buffer.withUnsafeMutableBytes { io.read(input, $0.baseAddress!, length, off_t(offset)) }
 +            if count < 0, errno == EINTR { continue }
 +            guard count > 0 else { throw Failure("Short read or read failure copying \(name) at \(offset): errno \(errno)") }
 +            hasher.update(data: Data(buffer.prefix(count)))
@@ -1303,13 +1537,20 @@ index 0000000..0035bb1
 +    }
 +
 +    private func fingerprint(_ descriptor: Int32, name: String) throws -> Fingerprint {
++        try Self.fingerprint(descriptor, name: name, io: io)
++    }
++
++    private static func fingerprint(_ descriptor: Int32, name: String, io: IO) throws -> Fingerprint {
 +        var metadata = stat()
-+        guard fstat(descriptor, &metadata) == 0, metadata.st_size >= 0 else { throw systemError(name) }
++        guard fstat(descriptor, &metadata) == 0, metadata.st_size >= 0 else {
++            throw Failure("\(name): \(String(cString: strerror(errno)))")
++        }
 +        var hasher = SHA256()
 +        var buffer = [UInt8](repeating: 0, count: 1 << 20)
 +        var offset: Int64 = 0
 +        while offset < Int64(metadata.st_size) {
-+            let count = pread(descriptor, &buffer, min(buffer.count, Int(Int64(metadata.st_size) - offset)), off_t(offset))
++            let length = min(buffer.count, Int(Int64(metadata.st_size) - offset))
++            let count = buffer.withUnsafeMutableBytes { io.read(descriptor, $0.baseAddress!, length, off_t(offset)) }
 +            if count < 0, errno == EINTR { continue }
 +            guard count > 0 else { throw Failure("Short read hashing \(name)") }
 +            hasher.update(data: Data(buffer.prefix(count)))
@@ -1319,7 +1560,7 @@ index 0000000..0035bb1
 +        return Fingerprint(size: offset, sha256: hasher.finalize().map { String(format: "%02x", $0) }.joined())
 +    }
 +
-+    private func unchanged(_ descriptor: Int32, since metadata: stat) -> Bool {
++    private static func unchanged(_ descriptor: Int32, since metadata: stat) -> Bool {
 +        var current = stat()
 +        return fstat(descriptor, &current) == 0 && current.st_size == metadata.st_size
 +            && current.st_mtim.tv_sec == metadata.st_mtim.tv_sec && current.st_mtim.tv_nsec == metadata.st_mtim.tv_nsec
