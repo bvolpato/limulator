@@ -162,10 +162,15 @@ struct CounterLabView: View {
             Label("This device", systemImage: "iphone.gen3")
                 .font(.headline)
 
-            Text("Read from the active UIKit screen.")
+            Text("Reported by iOS and the active UIKit screen.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
+            profileRow(
+                "Operating system",
+                value: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
+                identifier: "counterlab.device.os"
+            )
             profileRow(
                 "Interface idiom",
                 value: deviceMetrics?.idiom ?? "Waiting for active screen",

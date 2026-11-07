@@ -118,6 +118,16 @@ uv run limulator --device "$limulator_device" test \
 
 Each test run needs a new output directory. It writes `report.json` with the recorded graphics policy and guest screenshots. Adapt the JSON scenario and accessibility identifiers for your app. The [setup guide](SETUP.md#run-app-checks) explains scenario actions and their limits. The existence of a scenario does not establish that it has passed on every profile, and a functional pass does not establish full Metal equivalence.
 
+CounterLab also displays its native OS version and active UIKit screen metrics. On an iPhone 16 guest in portrait, check those values separately:
+
+```sh
+uv run limulator --device iphone-16 test \
+  examples/CounterLab/scenarios/iphone-16.json \
+  --output artifacts/iphone-16-profile-01
+```
+
+Use your registered device name in the command. For the iPad mini profile, select `examples/CounterLab/scenarios/ipad-mini.json`; it requires the native `iPad` interface idiom and a 744 by 1133 point screen at 2x scale. These assertions compare app readback with the expected profile. They do not verify a corresponding physical Apple GPU, and their presence does not establish a successful native run.
+
 ## Shortest path for each change
 
 | What changed | What to run |

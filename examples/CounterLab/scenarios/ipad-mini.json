@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "steps": [
+    {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
+    {"action": "wait_text", "text": "Counter Lab", "timeout": 120},
+    {"action": "scroll_to_element", "identifier": "counterlab.device.os"},
+    {"action": "wait_text", "text": "27.0.1", "identifier": "counterlab.device.os"},
+    {"action": "scroll_to_element", "identifier": "counterlab.device.idiom"},
+    {"action": "assert_text", "text": "iPad", "identifier": "counterlab.device.idiom"},
+    {"action": "scroll_to_element", "identifier": "counterlab.device.point_size"},
+    {"action": "assert_text", "text": "744 × 1133 pt", "identifier": "counterlab.device.point_size"},
+    {"action": "scroll_to_element", "identifier": "counterlab.device.display_scale"},
+    {"action": "assert_text", "text": "2×", "identifier": "counterlab.device.display_scale"},
+    {"action": "screenshot", "name": "ipad-mini-native-profile.png"}
+  ]
+}
