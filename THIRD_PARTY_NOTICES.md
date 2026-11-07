@@ -29,6 +29,8 @@ The QEMU base is [qemu-vphone at 14c9913d2231080bd234c69421ed4f293a25f767](https
 
 Patch 0014 backports exact generic-timer counter and WFIT deadline conversion from [3e884e825cd6d545f9774c236113cfd8745e204e](https://github.com/YahiaAngelo/qemu-vphone/commit/3e884e825cd6d545f9774c236113cfd8745e204e).
 
+Patch 0020 adds optional USB control-delivery and VirtIO notification traces to the pinned QEMU source. The trace fields contain transport metadata only.
+
 The modified source files carry these notices:
 
 | Patch | Pinned source file | Copyright notice | File license |
@@ -41,6 +43,9 @@ The modified source files carry these notices:
 | 0014 | [target/arm/cpu.h](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/cpu.h) | `Copyright (c) 2003 Fabrice Bellard` | LGPL version 2.1 or later |
 | 0014 | [target/arm/helper.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/helper.c) | No separate holder line | `GPL-2.0-or-later` |
 | 0014 | [target/arm/tcg/op_helper.c](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/target/arm/tcg/op_helper.c) | `Copyright (c) 2005-2007 CodeSourcery, LLC` | LGPL version 2.1 or later |
+| 0020 | `hw/vmapple/vusb.c`, `hw/vmapple/vusb-pci.c` | No separate holder line | `GPL-2.0-or-later` |
+| 0020 | `hw/virtio/virtio.c`, `hw/virtio/virtio-pci.c` | `Copyright IBM, Corp. 2007`; PCI source also credits `Copyright (c) 2009 CodeSourcery` | GPL version 2; PCI contributions after 2012-01-13 are GPL version 2 or later |
+| 0020 | `hw/vmapple/trace-events`, `hw/virtio/trace-events` | No separate holder line | No-header GPL version 2 or later statement in QEMU's notice |
 
 The patches leave those source headers unchanged. The complete pinned license texts are copied from [COPYING](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/COPYING) to [LICENSES/qemu-GPL-2.0.txt](LICENSES/qemu-GPL-2.0.txt) and from [COPYING.LIB](https://github.com/YahiaAngelo/qemu-vphone/blob/14c9913d2231080bd234c69421ed4f293a25f767/COPYING.LIB) to [LICENSES/qemu-LGPL-2.1.txt](LICENSES/qemu-LGPL-2.1.txt).
 

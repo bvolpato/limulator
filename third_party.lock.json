@@ -157,6 +157,11 @@
       "path": "patches/0019-opt-in-usb-restore-trace.patch",
       "sha256": "21228b83ae9ef5c2ec809ecb6576b4a51d229c5548166d0bc56816a278e0ed3d",
       "target": "backend"
+    },
+    {
+      "path": "patches/0020-qemu-usb-control-delivery-trace.patch",
+      "sha256": "3a43e599036d44d519ab17205e4f43f1eba21643848a8106c93719f369a7a2cb",
+      "target": "qemu"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},
