@@ -48,12 +48,12 @@
           <p class="eyebrow"><span class="eyebrow-dot"></span>Local iOS research runtime</p>
           <h1 id="hero-title">Your Linux box.<br /><em>A native iOS guest.</em></h1>
           <p class="hero-lede">Build an iPhone app with xtool, install it into an emulated iOS device, and drive the native interface from your workstation.</p>
-          <p class="hero-note">No remote Mac in the runtime path. The guest runs iOS on an ARM64 emulated iPhone; your apps and captures stay local. Duo has a cover framebuffer, an experimental software inner display and software fold postures. Runtime and touch behavior remain unvalidated; the physical hinge and second scanout are outside this emulation.</p>
+          <p class="hero-note">No remote Mac in the runtime path. The guest runs iOS on an ARM64 emulated iPhone; your apps and captures stay local. Duo has a cover framebuffer, an experimental software inner display and software fold postures. Guest startup needs repair before runtime and touch behavior can be checked; the physical hinge and second scanout are outside this emulation.</p>
           <div class="hero-actions">
             <a class="button button-dark" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#evidence">Check what is verified <span aria-hidden="true">↘</span></a>
           </div>
-          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>guest first boot in progress</span></p>
+          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>startup repair required</span></p>
         </div>
 
         <div class="hero-visual" data-hero-visual aria-label="Conceptual diagram of the active iPhone Duo cover-display profile">
@@ -82,7 +82,7 @@
             </figure>
           </div>
           <div class="visual-footer">
-            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>First boot in progress</span></span>
+            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>Startup repair required</span></span>
             <span><span data-hero-guest-device>iPhone Duo</span> · <span data-hero-guest-os>iOS 27.1</span></span>
           </div>
           <div class="visual-caption" data-hero-visual-caption><span>PROFILE GEOMETRY</span><span>NOT A NATIVE CAPTURE</span></div>
@@ -92,7 +92,7 @@
       <section class="signal-strip" aria-label="Current project status">
         <div class="signal-inner wrap">
           <div class="signal-intro"><span class="signal-cross" aria-hidden="true">+</span><span>WHERE THE WORK STANDS</span></div>
-          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>Duo guest</span><strong data-status-value>First boot in progress</strong><span class="signal-state" data-guest-os>iOS 27.1</span></div>
+          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>Duo guest</span><strong data-status-value>Startup repair required</strong><span class="signal-state" data-guest-os>iOS 27.1</span></div>
           <div class="signal-item" data-status="sample"><span class="signal-label">CounterLab</span><strong data-status-value>IPA built</strong><span class="signal-state">SDK 27.2</span></div>
           <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>Next validation</strong><span class="signal-state">Not yet verified</span></div>
         </div>
@@ -128,7 +128,7 @@
             <p class="step-kicker">INSTALL &amp; RUN</p>
             <h3>Native iOS</h3>
             <p>Limulator uploads the app, asks iOS to install it, then launches the native process.</p>
-            <span class="step-state" data-workflow-step="runtime">Runtime proof next</span>
+            <span class="step-state" data-workflow-step="runtime">Startup repair required</span>
           </article>
           <div class="rail-connector connector-pending" aria-hidden="true"><span>evidence</span><i></i></div>
           <article class="workflow-step step-pending">
@@ -136,10 +136,10 @@
             <p class="step-kicker">OBSERVE</p>
             <h3>Input &amp; capture</h3>
             <p>Tap, type, check app state and save genuine frames from the guest for repeatable review.</p>
-            <span class="step-state" data-workflow-step="capture">Not yet captured</span>
+            <span class="step-state" data-workflow-step="capture">Native app proof pending</span>
           </article>
         </div>
-        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>Debug and release sample IPAs build with SDK 27.2. The iOS restore and research guest installation are complete; normal first boot and data migration are in progress before native app checks.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
+        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>Debug and release sample IPAs build with SDK 27.2. The iOS restore and research guest installation are complete; guest startup needs repair before native app checks.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
       </section>
 
       <section id="profiles" class="profile-section" aria-labelledby="profiles-title">
@@ -182,7 +182,7 @@
                     <div><dt>Software postures</dt><dd data-profile-postures>Closed · book · open</dd></div>
                     <div data-inner-display-row><dt>Inner display</dt><dd data-profile-inner-display>2007 × 2853 px @ 3×</dd></div>
                   </dl>
-                  <p class="profile-note" data-profile-note>Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer. Software postures are available, but native layout, touch and runtime behavior remain unverified.</p>
+                  <p class="profile-note" data-profile-note>Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer, with software postures. Guest startup needs repair before native layout, touch, or posture behavior can be checked. The physical hinge and second physical scanout are outside this emulation.</p>
                 </div>
                 <div class="profile-graphic">
                   <div class="graphic-label"><span>DISPLAY MAP</span><span>CONCEPTUAL · NOT TO SCALE</span></div>
@@ -197,7 +197,7 @@
                   </div>
                 </div>
               </div>
-              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>First boot and data migration in progress; native app behavior remains unverified.</span></span><span data-profile-evidence>Profile 01 / 03</span></div>
+              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>Startup repair required before native app validation.</span></span><span data-profile-evidence>Profile 01 / 03</span></div>
             </div>
           </div>
         </div>
@@ -238,16 +238,16 @@
           </article>
           <article class="proof-column proof-progress">
             <span class="proof-mark" aria-hidden="true"><i></i></span>
-            <p class="proof-label" data-proof-label="guest">FIRST BOOT IN PROGRESS</p>
+            <p class="proof-label" data-proof-label="guest">STARTUP REPAIR</p>
             <h3>Duo / iOS 27.1 guest</h3>
-            <p>The iOS 27.1 restore and research guest installation are complete. Normal first boot and data migration are in progress.</p>
-            <span class="proof-state" data-proof-state="guest">Guest health: setup pending</span>
+            <p>The iOS 27.1 restore and research guest installation are complete. Guest startup needs repair before native app validation can continue.</p>
+            <span class="proof-state" data-proof-state="guest">App validation pending</span>
           </article>
           <article class="proof-column proof-next">
             <span class="proof-mark" aria-hidden="true"><span></span></span>
             <p class="proof-label" data-proof-label="runtime">NEXT PROOF</p>
             <h3>Install through capture</h3>
-            <p>CounterLab install, launch, native input, persistence, usable screenshots, software postures and app performance.</p>
+            <p>CounterLab install, launch, native input, persistence, usable screenshots, software postures and app performance remain unverified.</p>
             <span class="proof-state" data-proof-state="runtime">Not yet verified</span>
           </article>
         </div>
@@ -349,7 +349,7 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>Is the Duo app workflow already proven?<span aria-hidden="true">+</span></summary>
-              <p data-faq-runtime>Debug and release CounterLab IPAs build with SDK 27.2. The iOS 27.1 restore and research guest installation are complete; normal first boot and data migration are underway. CounterLab install, launch, input, persistence, software postures and usable screenshots remain unverified.</p>
+              <p data-faq-runtime>Debug and release CounterLab IPAs build with SDK 27.2. The iOS 27.1 restore and research guest installation are complete, but guest startup needs repair before native app validation can continue. CounterLab install, launch, input, persistence, software postures, usable screenshots and app-performance checks remain unverified.</p>
             </details>
             <details>
               <summary>Can I use any iPhone, iPad, or App Store app?<span aria-hidden="true">+</span></summary>
