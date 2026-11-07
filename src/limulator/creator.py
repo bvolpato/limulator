@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import datetime
 import errno
 import fcntl
 import hashlib
@@ -82,6 +83,29 @@ def _native_env(paths: Paths) -> dict[str, str]:
         VSETUP_ASSUME_YES="1",
     )
     return env
+
+
+def _write_usb_trace(path: Path, source: str, event: str, **fields) -> bool:
+    """Append one bounded, payload-free restore transport event."""
+    try:
+        record = {
+            "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace(
+                "+00:00", "Z"
+            ),
+            "monotonic_ns": time.monotonic_ns(),
+            "source": source,
+            "event": event,
+            **fields,
+        }
+        data = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            return os.write(descriptor, data) == len(data)
+        finally:
+            os.close(descriptor)
+    except Exception:
+        return False
 
 
 def _sudo(command, env, **kwargs):
@@ -639,6 +663,25 @@ class _USBHelpers:
         self.rule_created = False
         self.daemon_identity = None
         self.attach_failures = 0
+        self.trace_enabled = env.get("LIMULATOR_USB_TRACE") == "1"
+        self.trace_path = Path(
+            env.get("LIMULATOR_USB_TRACE_FILE", str(directory / "usb-transport-trace.jsonl"))
+        )
+        self.trace_states = {}
+        self.trace_warning_reported = False
+
+    def _trace(self, event: str, **fields) -> None:
+        if not self.trace_enabled:
+            return
+        if not _write_usb_trace(self.trace_path, "host", event, **fields) and not self.trace_warning_reported:
+            print("USB transport trace could not be written", file=sys.stderr, flush=True)
+            self.trace_warning_reported = True
+
+    def _trace_change(self, key: str, value, event: str, **fields) -> None:
+        if not self.trace_enabled or self.trace_states.get(key, object()) == value:
+            return
+        self.trace_states[key] = value
+        self._trace(event, **fields)
 
     def start(self):
         if _apple_devices():
@@ -700,6 +743,7 @@ class _USBHelpers:
             if self.daemon.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError(f"private usbmuxd did not start; see {self.directory / 'usbmuxd.log'}")
             time.sleep(0.1)
+        self._trace("host.private_usbmuxd_ready", socket_ready=True)
         self.env["LIMULATOR_CREATOR_USB_READY"] = "1"
 
     def _owned_import(self, port: int) -> bool:
@@ -751,13 +795,34 @@ class _USBHelpers:
             port: value for port, value in self.import_connections.items() if port in ports
         }
         owners = _listener_pids()
+        listener_scoped = bool(owners) and all(_in_scope(pid, self.unit) for pid in owners)
+        self._trace_change(
+            "listener",
+            (len(owners), listener_scoped),
+            "host.listener_state",
+            listener_count=len(owners),
+            scope_verified=listener_scoped,
+        )
         if not owners:
             return
-        if any(not _in_scope(pid, self.unit) for pid in owners):
+        if not listener_scoped:
             raise RuntimeError("USB/IP listener does not belong to this creation's exact systemd scope")
         if not ports:
             remote = _run(["usbip", "list", "-r", "127.0.0.1"], env=self.env, check=False, timeout=5)
-            if not re.search(r"^\s*1-1:.*\(05ac:[0-9a-f]{4}\)", remote.stdout, re.MULTILINE | re.IGNORECASE):
+            products = tuple(
+                int(product, 16)
+                for product in re.findall(
+                    r"^\s*1-1:.*\(05ac:([0-9a-f]{4})\)", remote.stdout, re.MULTILINE | re.IGNORECASE
+                )
+            )
+            self._trace_change(
+                "devlist",
+                products,
+                "host.devlist_state",
+                device_count=len(products),
+                product_ids=[f"{product:04x}" for product in products],
+            )
+            if not products:
                 return
             if _vhci_ports() or _usbip_connections():
                 raise RuntimeError("USB/IP controller or restore connection changed before owned attach")
@@ -765,17 +830,34 @@ class _USBHelpers:
             if not owners or any(not _in_scope(pid, self.unit) for pid in owners):
                 raise RuntimeError("USB/IP listener ownership changed before owned attach")
             self.import_unproven = True
+            attach_started = time.monotonic_ns()
             attached = _sudo(
                 ["usbip", "attach", "-r", "127.0.0.1", "-b", "1-1"], self.env, check=False, timeout=10
             )
             if attached.returncode:
                 self.attach_failures += 1
+                self._trace(
+                    "host.attach_result",
+                    result="failed",
+                    returncode=attached.returncode,
+                    consecutive_failures=self.attach_failures,
+                    elapsed_ns=time.monotonic_ns() - attach_started,
+                    product_ids=[f"{product:04x}" for product in products],
+                )
                 if self.attach_failures >= 20:
                     raise RuntimeError(
                         f"task-owned USB/IP import failed after bounded retries: {attached.stderr.strip()}"
                     )
                 return
             self.attach_failures = 0
+            self._trace(
+                "host.attach_result",
+                result="accepted",
+                returncode=0,
+                consecutive_failures=0,
+                elapsed_ns=time.monotonic_ns() - attach_started,
+                product_ids=[f"{product:04x}" for product in products],
+            )
             current = _vhci_ports()
             deadline = time.monotonic() + 5
             while not current and time.monotonic() < deadline:
@@ -795,6 +877,11 @@ class _USBHelpers:
             port = next(iter(current))
             self.import_connections[port] = next(iter(connections))
             self._owned_import(port)
+            self._trace(
+                "host.vhci_import_verified",
+                port=port,
+                product_ids=[f"{product:04x}" for product in products],
+            )
             self.import_unproven = False
             ports = current
         for port, local in ports.items():
@@ -804,7 +891,12 @@ class _USBHelpers:
                 continue
             node = Path("/sys/bus/usb/devices") / local
             with contextlib.suppress(FileNotFoundError):
-                if (node / "idVendor").read_text().strip() != "05ac":
+                vendor_id = (node / "idVendor").read_text().strip().lower()
+                product_id = None
+                if self.trace_enabled:
+                    with contextlib.suppress(OSError):
+                        product_id = (node / "idProduct").read_text().strip().lower()
+                if vendor_id != "05ac":
                     raise RuntimeError("owned USB/IP port contains an unexpected vendor")
                 bus, device = int((node / "busnum").read_text()), int((node / "devnum").read_text())
                 key = (local, bus, device)
@@ -812,8 +904,29 @@ class _USBHelpers:
                     continue
                 usb = Path(f"/dev/bus/usb/{bus:03d}/{device:03d}")
                 info = usb.stat()
-                if info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o600:
-                    _signal_owned(self.daemon_identity, signal.SIGUSR2)
+                permitted = info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o600
+                self._trace_change(
+                    f"devnode-{key}",
+                    (info.st_uid, info.st_mode & 0o777),
+                    "host.vhci_device_node",
+                    port=port,
+                    product_id=product_id,
+                    owner_uid=info.st_uid,
+                    mode=f"{info.st_mode & 0o777:04o}",
+                    permitted=permitted,
+                )
+                if permitted:
+                    try:
+                        sent = _signal_owned(self.daemon_identity, signal.SIGUSR2)
+                    except OSError as error:
+                        self._trace(
+                            "host.usbmux_rescan",
+                            sent=False,
+                            error_errno=error.errno,
+                            port=port,
+                        )
+                        raise
+                    self._trace("host.usbmux_rescan", sent=sent, port=port)
                     self.seen_devices.add(key)
 
     def close(self):
@@ -1176,6 +1289,14 @@ def _pipeline(
     run_dir = Path(tempfile.mkdtemp(prefix="create-", dir=vm))
     state["run_dir"] = str(run_dir)
     env.update(VSOCK="vhost", VSOCK_DIR=str(run_dir / "vsock"), REIMS_VGPU_CENSUS_DIR=str(run_dir / "census"))
+    if env.get("LIMULATOR_USB_TRACE") == "1":
+        trace_path = run_dir / "usb-transport-trace.jsonl"
+        env["LIMULATOR_USB_TRACE_FILE"] = str(trace_path)
+        trace_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        with contextlib.suppress(OSError):
+            trace_fd = os.open(trace_path, trace_flags, 0o600)
+            os.close(trace_fd)
+        print(f"USB transport trace: {trace_path}", file=sys.stderr, flush=True)
     for directory in (run_dir / "vsock", run_dir / "census"):
         _private_directory(directory)
     helpers = _USBHelpers(paths, run_dir, env, unit)

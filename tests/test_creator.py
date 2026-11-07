@@ -1285,6 +1285,88 @@ def test_attacher_only_requests_the_owned_exported_apple_bus(catalog, tmp_path, 
     assert helper.import_connections == {0: connection}
 
 
+def test_usb_transport_trace_is_opt_in_and_deduplicates_state(catalog, tmp_path, monkeypatch):
+    trace_path = tmp_path / "usb-transport-trace.jsonl"
+    disabled = creator._USBHelpers(catalog, tmp_path, {}, "owned.scope")
+    disabled._trace("host.listener_state", listener_count=0)
+    assert not trace_path.exists()
+
+    monkeypatch.setenv("LIMULATOR_USB_TRACE", "1")
+    monkeypatch.setenv("LIMULATOR_USB_TRACE_FILE", str(trace_path))
+    env = creator._native_env(catalog)
+    assert env["LIMULATOR_USB_TRACE"] == "1"
+    helper = creator._USBHelpers(catalog, tmp_path, env, "owned.scope")
+    for _ in range(2):
+        helper._trace_change(
+            "listener",
+            (0, False),
+            "host.listener_state",
+            listener_count=0,
+            scope_verified=False,
+        )
+
+    records = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["source"] == "host"
+    assert records[0]["event"] == "host.listener_state"
+    assert records[0]["listener_count"] == 0
+    assert records[0]["scope_verified"] is False
+    assert records[0]["monotonic_ns"] > 0
+    assert records[0]["utc"].endswith("Z")
+    assert stat.S_IMODE(trace_path.stat().st_mode) == 0o600
+
+
+def test_optional_product_id_read_does_not_skip_owned_rescan(catalog, tmp_path, monkeypatch):
+    trace_path = tmp_path / "usb-transport-trace.jsonl"
+    helper = creator._USBHelpers(
+        catalog,
+        tmp_path,
+        {"LIMULATOR_USB_TRACE": "1", "LIMULATOR_USB_TRACE_FILE": str(trace_path)},
+        "owned.scope",
+    )
+    helper.daemon_identity = creator._identity(os.getpid())
+    helper.owned_ports = {0}
+    connection = ("net:[123]", "0100007F:1234", "0100007F:0CA8", 5678)
+    helper.import_connections = {0: connection}
+    helper._owned_import = lambda _port: True
+    monkeypatch.setattr(creator, "_apple_devices", lambda: [])
+    monkeypatch.setattr(creator, "_listener_pids", lambda: [1234])
+    monkeypatch.setattr(creator, "_in_scope", lambda *_: True)
+    monkeypatch.setattr(creator, "_vhci_ports", lambda: {0: "11-1"})
+    monkeypatch.setattr(creator, "_usbip_connections", lambda: {connection})
+    signals = []
+    monkeypatch.setattr(
+        creator, "_signal_owned", lambda identity, value: signals.append(value) or True
+    )
+
+    class SysfsPath:
+        def __init__(self, value):
+            self.value = str(value)
+
+        def __truediv__(self, value):
+            return SysfsPath(f"{self.value}/{value}")
+
+        def read_text(self):
+            name = self.value.rsplit("/", 1)[-1]
+            values = {"idVendor": "05ac", "busnum": "11", "devnum": "2"}
+            if name == "idProduct":
+                raise FileNotFoundError(self.value)
+            return values[name]
+
+        def stat(self):
+            return SimpleNamespace(st_uid=os.getuid(), st_mode=stat.S_IFCHR | 0o600)
+
+    monkeypatch.setattr(creator, "Path", SysfsPath)
+    helper.poll()
+
+    assert signals == [creator.signal.SIGUSR2]
+    events = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    node_event = next(event for event in events if event["event"] == "host.vhci_device_node")
+    assert node_event["product_id"] is None
+    assert node_event["permitted"] is True
+    assert any(event["event"] == "host.usbmux_rescan" and event["sent"] for event in events)
+
+
 @pytest.mark.parametrize("when", ["before", "during"])
 def test_attacher_refuses_listener_replacement_before_recording_import_identity(
     catalog, tmp_path, monkeypatch, when
