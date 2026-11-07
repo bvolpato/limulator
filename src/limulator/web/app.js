@@ -302,7 +302,7 @@
     const previous = els.appSelector.value;
     els.appSelector.replaceChildren();
 
-    if (appsLoading) {
+    if (appsLoading && installedApps.length === 0) {
       const option = document.createElement("option");
       option.value = "";
       option.textContent = "Loading installed apps…";

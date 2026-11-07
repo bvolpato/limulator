@@ -131,6 +131,14 @@ function setup(stalledPaths = []) {
     });
     return elements.get(id);
   }
+  elements.set('app-selector', {
+    children: [], selectedIndex: -1,
+    get value() { return this.children[this.selectedIndex]?.value || ''; },
+    set value(value) { this.selectedIndex = this.children.findIndex((option) => option.value === value); },
+    replaceChildren() { this.children = []; this.selectedIndex = -1; },
+    append(option) { this.children.push(option); if (this.selectedIndex < 0) this.selectedIndex = 0; },
+    addEventListener() {},
+  });
   const timers = new Map();
   const calls = [], notices = [], screens = [], reads = [], commands = [];
   let nextTimer = 0;
@@ -143,6 +151,7 @@ function setup(stalledPaths = []) {
     },
     document: {
       hidden: false, getElementById: element,
+      createElement: () => ({ value: '', textContent: '' }),
       querySelector: () => ({ content: 'session-token' }),
       querySelectorAll: () => [], addEventListener() {},
     },
@@ -173,8 +182,8 @@ function setup(stalledPaths = []) {
   };
   vm.createContext(context);
   vm.runInContext(source.replace('  initialize();', `
-    renderStatus = () => updateControls();
-    updateAppsView = updateDestination = clearScreen = () => {};
+    renderStatus = () => { updateAppsView(); updateControls(); };
+    updateDestination = clearScreen = () => {};
     decodeImage = async () => ({ width: 1, height: 1 });
     showNotice = (message, isError) => globalThis.notices.push({ message, isError });
     globalThis.api = {
@@ -185,6 +194,7 @@ function setup(stalledPaths = []) {
         updateControls();
       },
       disconnect() { deviceStatus = { state: 'offline' }; updateControls(); },
+      apps(apps) { installedApps = apps; updateAppsView(); updateControls(); },
       get operationCount() { return operations.size; },
       get selectedName() { return selectedName; },
     };
@@ -236,6 +246,44 @@ const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
     assert.equal(commands.length, 1);
     commands[0].body.resolve('{}');
     assert.equal(await command, true);
+  }
+  {
+    const { api, reads, element } = setup(['/api/apps']);
+    const apps = [{ bundle_id: 'com.brutv', name: 'BruTV' }, { bundle_id: 'com.settings', name: 'Settings' }];
+    api.select('duo');
+    api.apps(apps);
+    const selector = element('app-selector');
+    const launch = element('launch-app');
+    selector.value = 'com.brutv';
+    api.updateControls();
+    assert.equal(launch.disabled, false);
+    const refresh = api.loadApps();
+    await flush();
+    assert.equal(selector.value, 'com.brutv', 'refresh must preserve the selected installed app while loading');
+    assert.equal(selector.disabled, true);
+    reads[0].body.resolve(JSON.stringify({ apps }));
+    await refresh;
+    assert.equal(selector.value, 'com.brutv');
+    assert.equal(launch.disabled, false);
+    const removed = api.loadApps();
+    reads[1].body.resolve(JSON.stringify({ apps: [apps[1]] }));
+    await removed;
+    assert.equal(selector.value, '', 'a removed app must lose its selection');
+    assert.equal(launch.disabled, true);
+    api.apps(apps);
+    selector.value = 'com.brutv';
+    const oldRefresh = api.loadApps();
+    api.select('phone');
+    assert.equal(selector.value, '', 'changing devices must clear the old selection');
+    reads[2].body.resolve(JSON.stringify({ apps }));
+    await oldRefresh;
+    assert.equal(selector.value, '');
+    assert.equal(selector.children.length, 1, 'the old response must not populate the new device');
+    const phoneRefresh = api.loadApps();
+    reads[3].body.resolve(JSON.stringify({ apps }));
+    await phoneRefresh;
+    assert.equal(selector.value, '', 'even a shared app identifier must not carry selection across devices');
+    assert.equal(launch.disabled, true);
   }
   {
     const { api, screens, commands, notices, timers } = setup();
