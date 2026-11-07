@@ -78,7 +78,7 @@ uv run limulator --device duo start --wait 600
 uv run limulator --device duo stop
 ```
 
-`start --window` also opens the native emulator window. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
+`start --window` opens the native emulator window with Home, Lock, volume, and Screenshot controls to the right of the device. Screenshots save only when you press Screenshot. The toolbar uses the private control socket of that run and ends with its emulator. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
 
 In the console, the destination picker lists registered devices and profiles that can be created. Selecting a registered device shows its OS, geometry, support status, and named Start and Stop controls. Stop waits for the owned guest to shut down and rejects duplicate requests while it is in progress. Duo alone exposes fold controls. Selecting a profile without a registered device shows a copyable creation command; creation and firmware downloads run through the terminal. Refresh the picker after registering or creating a device.
 

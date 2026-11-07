@@ -545,8 +545,7 @@ def _supervise(args: argparse.Namespace) -> int:
         REIMS_VGPU_WINDOW_CONTROL=os.fspath(run_dir / "window.sock"),
         QEMU=os.fspath(paths.backend / "qemu/build/qemu-system-aarch64"),
     )
-    # Upstream's toolbar chooses a shared socket. The local console supplies controls.
-    env["TOOLBAR"] = "0"
+    env["TOOLBAR"] = "1" if args.window else "0"
     command = [
         "systemd-run",
         "--user",

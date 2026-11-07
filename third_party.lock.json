@@ -162,6 +162,11 @@
       "path": "patches/0020-qemu-usb-control-delivery-trace.patch",
       "sha256": "3a43e599036d44d519ab17205e4f43f1eba21643848a8106c93719f369a7a2cb",
       "target": "qemu"
+    },
+    {
+      "path": "patches/0022-native-toolbar-private-socket.patch",
+      "sha256": "bbb5917f2c3bb9a74d37ab7ab5845bdf515dc23a06edebafd156ee149b99759d",
+      "target": "backend"
     }
   ],
   "apfs": {"repository": "https://github.com/linux-apfs/linux-apfs-rw.git", "revision": "03187127cd2e62cf78321cdb942eb3a7b17981f9", "patch": "backend:patches/linux-apfs-rw-ios27.patch"},

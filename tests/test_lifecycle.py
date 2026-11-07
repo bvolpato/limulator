@@ -225,7 +225,8 @@ def test_resource_guard_rejects_low_memory_without_starting_workload(monkeypatch
         lifecycle._resource_guard()
 
 
-def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, monkeypatch):
+@pytest.mark.parametrize("window", [False, True])
+def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, monkeypatch, window):
     # Run the real supervisor against a tiny QMP peer with a QEMU-named executable.
     # The fake scope launcher consumes no guest RAM and does not contact systemd.
     with tempfile.TemporaryDirectory(prefix="lim-life-") as temporary:
@@ -245,8 +246,11 @@ def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(device, 
         scope.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
         scope.chmod(0o700)
         program = """
-import json,socket,sys,time
+import json,os,socket,sys,time
 qmp = sys.argv[sys.argv.index('-qmp') + 1].split(',')[0].removeprefix('unix:')
+environment = {key: os.environ.get(key) for key in ('WINDOW','TOOLBAR','REIMS_VGPU_WINDOW_CONTROL')}
+with open(os.environ['FAKE_ENV_CAPTURE'], 'w') as f:
+    json.dump(environment, f)
 time.sleep(0.5)
 server = socket.socket(socket.AF_UNIX)
 server.bind(qmp)
@@ -260,8 +264,10 @@ for line in stream:
     if request['execute']=='quit': break
 connection.close()
 server.close()
-"""
+        """
         monkeypatch.setenv("FAKE_QEMU_PROGRAM", program)
+        env_capture = paths.data / "qemu-env.json"
+        monkeypatch.setenv("FAKE_ENV_CAPTURE", str(env_capture))
         monkeypatch.setenv("FAKE_PYTHON_HOME", sys.base_prefix)
         monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
         isolated = replace(device, cid=500001)
@@ -270,21 +276,26 @@ server.close()
         command = (
             "from pathlib import Path; from limulator.lifecycle import Paths,Registry,Runtime; "
             "import limulator.lifecycle as life; life._resource_guard=lambda:None; "
-            f"p=Paths(Path({str(paths.data)!r})); Runtime(p,Registry(p).get('phone')).start()"
+            f"p=Paths(Path({str(paths.data)!r})); Runtime(p,Registry(p).get('phone')).start(window={window!r})"
         )
         subprocess.run([sys.executable, "-c", command], check=True, timeout=15)
         # The starting CLI has exited. Its independent worker must retain ownership.
         try:
             deadline = time.monotonic() + 5
             while not (
-                lifecycle._identity_alive(runtime._metadata().get("process"))
-                and runtime.qmp_path.is_socket()
+                lifecycle._identity_alive(runtime._metadata().get("process")) and runtime.qmp_path.is_socket()
             ):
                 assert runtime._metadata().get("state") != "error", (
                     lifecycle.Path(runtime._metadata()["run_dir"]) / "qemu.log"
                 ).read_text()
                 assert time.monotonic() < deadline, runtime._metadata()
                 time.sleep(0.05)
+            actual_env = json.loads(env_capture.read_text())
+            assert actual_env["WINDOW"] == ("1" if window else "0")
+            assert actual_env["TOOLBAR"] == ("1" if window else "0")
+            assert actual_env["REIMS_VGPU_WINDOW_CONTROL"] == (
+                f"{runtime._metadata()['run_dir']}/window.sock"
+            )
             assert lifecycle._identity_alive(runtime._metadata()["supervisor"])
             with pytest.raises(RuntimeError, match="already owned"):
                 lifecycle._lock_disk(isolated.vm_path / "Disk.img")
