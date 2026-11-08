@@ -136,6 +136,14 @@ uv run limulator --device iphone-16 test \
 
 Use your registered device name in the command. For the iPad mini profile, select `examples/CounterLab/scenarios/ipad-mini.json`; it requires the native `iPad` interface idiom and a 744 by 1133 point screen at 2x scale. These assertions compare app readback with the expected profile. They do not verify a corresponding physical Apple GPU, and their presence does not establish a successful native run.
 
+### Current Duo result
+
+On 8 November 2026 UTC, an existing iPhone Duo research guest running iOS 27.1, build `24A94425`, ran CounterLab in compatible graphics. The cover reported 466 by 678 interface points at 3x scale. Book and open postures produced a real two-column UIKit layout reporting 951 by 669 points at 3x scale. The guest reported settled hinge angles of 100, 180, and 0 degrees during the round trip. The presented framebuffer remained the single 1398 by 2034 panel, rotated when open; this does not establish a second physical scanout.
+
+Screenshot-coordinate input on the open display changed the count from `0` to `1`, and returning to the cover retained `1`. A semantic tap on the cover then changed it to `2`. Inner-display accessibility input is blocked: `ui.tap_element` returned `tapped: true` for Add one but left the count at `0`. The guest's `device.screen` still reported 678 by 466 points while the app rendered at 951 by 669, and the flat AX snapshot omitted visible lower controls. The pinned IcliKit input path uses the main-panel geometry rather than the active inner viewport. Removing Limulator's bounds checks would not correct that touch transform.
+
+These observations used backend `363c82a`, CLI `0b896ef`, and QEMU `fa07541`. The newer toolbar revision fixes cold Fold discovery separately and has regression and fork CI validation. The full Duo scenario has not passed, clean creation remains unaccepted, and inner-display geometry and semantic input require a shared guest-side fix before claiming complete Duo support.
+
 ## Shortest path for each change
 
 | What changed | What to run |
