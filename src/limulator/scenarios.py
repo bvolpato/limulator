@@ -40,7 +40,17 @@ _MAX_TREE_NODES = 100_000
 _WAIT_TEXT_POLL_SECONDS = 0.25
 _WAIT_HINGE_POLL_SECONDS = 0.25
 _MAX_AX_ERROR_BODY_BYTES = 4096
-_AX_READINESS_ERRORS = frozenset({"AX element query failed (-25215)", "AX element query failed (-25216)"})
+_AX_READINESS_ERRORS = frozenset(
+    {
+        ("failed", "AX element query failed (-25215)"),
+        ("failed", "AX element query failed (-25216)"),
+        (
+            "unavailable",
+            "Active interface geometry is unavailable: "
+            "Foreground bundle or its unique scene could not be verified within the display bounds",
+        ),
+    }
+)
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
 _BUTTONS = {"home", "lock", "volume-up", "volume-down"}
 _FOLD_POSITIONS = {"closed", "book", "open"}
@@ -396,16 +406,23 @@ def _ax_readiness_error(error: ProtocolError) -> str | None:
     if len(error.details) > _MAX_AX_ERROR_BODY_BYTES:
         return None
     try:
-        response = json.loads(error.details.decode("utf-8"), object_pairs_hook=_unique_object)
+        response = json.loads(
+            error.details.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant
+        )
     except (RecursionError, UnicodeDecodeError, ValueError):
         return None
     if not isinstance(response, dict):
         return None
     detail = response.get("error")
-    if not isinstance(detail, dict) or detail.get("code") != "failed":
+    if not isinstance(detail, dict):
         return None
+    code = detail.get("code")
     message = detail.get("message")
-    return message if isinstance(message, str) and message in _AX_READINESS_ERRORS else None
+    return (
+        message
+        if isinstance(code, str) and isinstance(message, str) and (code, message) in _AX_READINESS_ERRORS
+        else None
+    )
 
 
 def _safe_result(value: Any) -> Any:
@@ -582,6 +599,7 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
     deadline = started + action["timeout"]
     swipes = 0
     reason = "target has not been queried"
+    last_readiness_error: ProtocolError | None = None
 
     def remaining() -> float:
         value = deadline - time.monotonic()
@@ -589,7 +607,7 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
             raise ScenarioError(
                 f"scroll_to_element {action['identifier']!r} timed out after {swipes} "
                 f"{action['direction']} swipes: {reason}"
-            )
+            ) from last_readiness_error
         return value
 
     while True:
@@ -605,9 +623,18 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
             raise ScenarioError(f"Guest returned invalid screen bounds: {error}") from error
         if width <= 0 or height <= 0:
             raise ScenarioError("Guest screen point bounds must be positive")
-        target, reason = _scroll_target(
-            service.tree(timeout=remaining()), action["identifier"], width, height
-        )
+        try:
+            tree = service.tree(timeout=remaining())
+        except ProtocolError as error:
+            readiness = _ax_readiness_error(error)
+            if readiness is None:
+                raise
+            last_readiness_error = error
+            reason = f"last AX readiness error: {readiness}"
+            time.sleep(min(_WAIT_TEXT_POLL_SECONDS, remaining()))
+            continue
+        last_readiness_error = None
+        target, reason = _scroll_target(tree, action["identifier"], width, height)
         remaining()
         if target:
             return {

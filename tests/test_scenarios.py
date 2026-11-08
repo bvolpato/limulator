@@ -818,7 +818,7 @@ def _ax_readiness_error(
     message: str = "AX element query failed (-25216)",
     *,
     code: str = "failed",
-    status_code: int = 400,
+    status_code: int | None = 400,
     details: bytes | None = None,
 ) -> ProtocolError:
     if details is None:
@@ -826,6 +826,12 @@ def _ax_readiness_error(
             {"error": {"code": code, "message": message}, "id": 1, "type": "response"}
         ).encode()
     return ProtocolError("HTTP error from vphoned", status_code=status_code, details=details)
+
+
+_SCENE_READINESS_MESSAGE = (
+    "Active interface geometry is unavailable: "
+    "Foreground bundle or its unique scene could not be verified within the display bounds"
+)
 
 
 @pytest.mark.parametrize("message", ["AX element query failed (-25215)", "AX element query failed (-25216)"])
@@ -881,14 +887,21 @@ def test_wait_text_bounds_persistent_ax_readiness_errors_by_deadline(
         (500, "failed", "AX element query failed (-25216)"),
         (400, "other", "AX element query failed (-25216)"),
         (400, "failed", "AX element query failed (-25217)"),
+        (400, "failed", _SCENE_READINESS_MESSAGE),
+        (400, "unavailable", "Active interface geometry is unavailable: No current layout"),
+        (None, "unavailable", _SCENE_READINESS_MESSAGE),
     ],
 )
-def test_wait_text_propagates_non_readiness_protocol_errors(
-    tmp_path: Path, status_code: int, code: str, message: str
+@pytest.mark.parametrize(
+    "action",
+    [{"action": "wait_text", "text": "Ready"}, {"action": "scroll_to_element", "identifier": "target"}],
+)
+def test_ui_reads_propagate_non_readiness_protocol_errors(
+    tmp_path: Path, status_code: int | None, code: str, message: str, action: dict
 ) -> None:
     path = _write_scenario(
         tmp_path,
-        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 1}]},
+        {"version": 1, "steps": [{**action, "timeout": 1}]},
     )
     protocol_error = _ax_readiness_error(message, code=code, status_code=status_code)
     service = ScriptedTreeService([protocol_error])
@@ -908,12 +921,20 @@ def test_wait_text_propagates_non_readiness_protocol_errors(
         b"{invalid json",
         b'{"error":{"code":"failed","message":"AX element query failed (-25216)"}}' + b" " * 4096,
         b"[" * 1100 + b"]" * 1100,
+        b'{"error":{"code":"other","code":"failed","message":"AX element query failed (-25216)"}}',
+        b'{"error":{"code":"failed","message":"AX element query failed (-25216)"},"id":NaN}',
     ],
 )
-def test_wait_text_does_not_retry_malformed_or_oversized_ax_errors(tmp_path: Path, details: bytes) -> None:
+@pytest.mark.parametrize(
+    "action",
+    [{"action": "wait_text", "text": "Ready"}, {"action": "scroll_to_element", "identifier": "target"}],
+)
+def test_ui_reads_do_not_retry_malformed_or_oversized_errors(
+    tmp_path: Path, details: bytes, action: dict
+) -> None:
     path = _write_scenario(
         tmp_path,
-        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 1}]},
+        {"version": 1, "steps": [{**action, "timeout": 1}]},
     )
     protocol_error = _ax_readiness_error(details=details)
     service = ScriptedTreeService([protocol_error])
@@ -945,6 +966,73 @@ def _ax_target(*, identifier="target", x=50, y=75, visible=True):
         "elements": [{"identifier": identifier, "visible": visible, "x": x, "y": y}],
         "truncated": False,
     }
+
+
+@pytest.mark.parametrize(
+    "action,tree",
+    [
+        ({"action": "wait_text", "text": "Ready"}, [{"label": "Ready"}]),
+        ({"action": "scroll_to_element", "identifier": "target", "max_swipes": 0}, _ax_target()),
+    ],
+)
+def test_ui_reads_retry_scene_readiness_without_input(tmp_path, monkeypatch, action, tree):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+    path = _write_scenario(tmp_path, {"version": 1, "steps": [{**action, "timeout": 1}]})
+    service = ScriptedTreeService([_ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable"), tree])
+
+    report = run_scenario(service, path, tmp_path / "scene-ready")
+
+    assert report["status"] == "passed"
+    assert service.tree_calls == 2
+    assert service.inputs == []
+    assert None not in service.capture_paths
+    if action["action"] == "scroll_to_element":
+        assert report["steps"][0]["result"]["swipes"] == 0
+
+
+def test_scroll_scene_readiness_deadline_preserves_original_error(tmp_path, monkeypatch):
+    now = [10.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "scroll_to_element", "identifier": "target", "timeout": 0.51}]},
+    )
+    protocol_error = _ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable")
+    service = ScriptedTreeService([protocol_error])
+
+    with pytest.raises(ScenarioError, match="timed out after 0 down swipes") as error:
+        run_scenario(service, path, tmp_path / "scene-not-ready")
+
+    report = json.loads(error.value.report_path.read_text())
+    assert report["failure"]["error"].endswith(_SCENE_READINESS_MESSAGE)
+    assert error.value.__cause__.__cause__ is protocol_error
+    assert service.tree_calls == 3
+    assert all(0 < timeout <= 0.51 for timeout in service.tree_timeouts)
+    assert service.inputs == []
+    assert None not in service.capture_paths
+    assert now[0] == pytest.approx(10.51)
+
+
+def test_scroll_does_not_retry_readiness_errors_from_swipe(tmp_path):
+    protocol_error = _ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable")
+
+    class FailedSwipe(ScriptedTreeService):
+        def swipe(self, *args):
+            super().swipe(*args)
+            raise protocol_error
+
+    service = FailedSwipe([_ax_target(visible=False)])
+    path = _write_scenario(
+        tmp_path, {"version": 1, "steps": [{"action": "scroll_to_element", "identifier": "target"}]}
+    )
+
+    with pytest.raises(ScenarioError) as error:
+        run_scenario(service, path, tmp_path / "failed-input")
+
+    assert error.value.__cause__ is protocol_error
+    assert service.tree_calls == 1
+    assert [name for name, _ in service.inputs] == ["swipe"]
 
 
 @pytest.mark.parametrize("visible", [True, 1])
