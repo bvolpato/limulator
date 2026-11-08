@@ -65,10 +65,13 @@ def migration_status(migration_raw, setup_raw, build):
         result = entry["value"]
         if result.get("buildVersion") != build:
             return 1
-        if result.get("success") is False:
+        success = result.get("success")
+        # DataMigrator may serialize success as a Boolean or integer 0/1.
+        # Strings, floats, and other truthy values must not permit setup.
+        if success is False or (type(success) is int and success == 0):
             print(f"guest DataMigrator reported migration success=false for expected build {build}")
             return 2
-        if result.get("success") is not True:
+        if success is not True and not (type(success) is int and success == 1):
             return 1
         setup = rpc_result(setup_raw)
         return 0 if isinstance(setup, dict) and setup.get("data_migration_done") is True else 1

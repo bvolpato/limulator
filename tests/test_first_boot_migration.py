@@ -125,11 +125,12 @@ vrpc() {
     [
         (result(success=False), True, "migration success=false for expected build"),
         (result(success=False), False, "migration success=false for expected build"),
+        (result(success=0), True, "migration success=false for expected build"),
         ({"id": 1, "result": {"values": {}}}, True, "migration timed out"),
         (result(build="24A446"), True, "migration timed out"),
         (result(build="24A446", success=False), True, "migration timed out"),
         (result(success="true"), True, "migration timed out"),
-        (result(success=1), True, "migration timed out"),
+        (result(success=1.0), True, "migration timed out"),
         (result(), False, "migration timed out"),
         (result() | {"error": {"message": "unsupported"}}, True, "migration timed out"),
         (result() | {"id": 99}, True, "migration timed out"),
@@ -147,7 +148,7 @@ def test_marker_alone_cannot_trigger_setup_mutations(backend, tmp_path, reply, m
     assert polls == (1 if failure.startswith("migration success=false") else 2)
 
 
-@pytest.mark.parametrize("responses", [[result()], [None, result()]])
+@pytest.mark.parametrize("responses", [[result()], [None, result()], [result(success=1)], [None, result(success=1)]])
 def test_current_success_reaches_setup_only_after_strict_result(backend, tmp_path, responses):
     completed, calls, polls = first_boot(backend, tmp_path, responses)
     assert completed.returncode == 0, completed.stderr
