@@ -482,6 +482,67 @@ def _unregistered_booted_vm(paths):
     return candidate, receipt
 
 
+@pytest.mark.parametrize("native_env", [pytest.param(False, id="direct"), pytest.param(True, id="native")])
+@pytest.mark.parametrize("cache", ["default", "empty", "absolute", "relative", "home"])
+def test_pipeline_uses_one_firmware_cache_for_verification_and_native_env(
+    catalog, tmp_path, monkeypatch, cache, native_env
+):
+    monkeypatch.chdir(tmp_path)
+    if cache == "absolute":
+        expected = tmp_path / "private HDD" / "firmware catalog"
+        configured = str(expected)
+    elif cache == "relative":
+        configured = "relative cache with spaces"
+        expected = tmp_path / configured
+    elif cache == "home":
+        configured = "~/firmware catalog with spaces"
+        expected = creator.Path.home() / "firmware catalog with spaces"
+    else:
+        configured = "" if cache == "empty" else None
+        expected = creator.Path.home() / ".cache/vphone"
+    expected = expected.resolve()
+    monkeypatch.delenv("VSETUP_CACHE", raising=False)
+    if configured is not None:
+        monkeypatch.setenv("VSETUP_CACHE", configured)
+    environment = (
+        creator._native_env(catalog)
+        if native_env
+        else ({"VSETUP_CACHE": configured} if configured is not None else {})
+    )
+    if native_env:
+        assert environment.get("VSETUP_CACHE") == str(expected)
+    candidate, _ = _incomplete_vm(catalog)
+    profile = get_profile("iphone-duo")
+    (catalog.backend / "setup/create-vm.sh").write_text("# VPHONE_CREATOR_USB_READY VPHONE_FIRST_BOOT_QMP\n")
+    verified = []
+
+    def verify(vm, files):
+        assert vm == candidate.vm_path
+        verified.extend(path for path, _descriptor in files)
+        return []
+
+    def stop():
+        raise RuntimeError("stop before native creation")
+
+    def no_native_work(*_args, **_kwargs):
+        pytest.fail("native creation must not run")
+
+    monkeypatch.setattr(creator, "_verified_firmware_stage", verify)
+    monkeypatch.setattr(creator, "_unit_states", stop)
+    monkeypatch.setattr(creator, "_run", no_native_work)
+    monkeypatch.setattr(creator._USBHelpers, "start", no_native_work)
+    monkeypatch.setattr(creator._USBHelpers, "close", lambda self: None)
+    monkeypatch.setattr(creator.subprocess, "Popen", no_native_work)
+    with pytest.raises(RuntimeError, match="stop before native creation"):
+        creator._pipeline(catalog, candidate, profile, {}, environment)
+
+    ios, cloud = expected / profile.main_firmware.filename, expected / profile.cloud_os_firmware.filename
+    assert verified == [ios, cloud]
+    assert environment["VSETUP_CACHE"] == str(expected)
+    assert environment["IPSW_PATH"] == environment["IPSW_URL"] == str(ios)
+    assert environment["CLOUDOS_IPSW_URL"] == str(cloud)
+
+
 @pytest.mark.parametrize(
     ("native_trace", "legacy_trace", "trace_enabled"),
     [(None, None, False), (None, "1", True), ("0", "1", False), ("1", "0", True), ("0", None, False)],

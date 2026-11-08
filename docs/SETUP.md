@@ -24,6 +24,8 @@ The native vphone CLI uses a Release build. After updating its pinned source rev
 
 The default data directory is `~/.local/share/limulator`. `LIMULATOR_HOME` or the CLI's `--data` selects another directory. Source and tools live under `backends/` and `tools/`; VM bundles live under `vms/`; device registrations live under `devices/`; runtime logs and sockets live under `runs/`. Firmware stays in the local cache. These files do not belong in Git.
 
+Firmware downloads and verification use the native `VSETUP_CACHE` directory. An unset or empty value selects `~/.cache/vphone`. Limulator expands `~` and resolves relative paths against the invocation directory before passing the absolute path to native tools. To select a private HDD or another filesystem for firmware storage, prefix creation with `VSETUP_CACHE="/mnt/private-hdd/firmware cache"` and choose a directory with enough free disk space.
+
 ## Create and start a device
 
 List the pinned profiles before creating a device:

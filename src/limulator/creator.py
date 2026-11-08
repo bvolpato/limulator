@@ -80,6 +80,10 @@ def _normalize_backend_controls(env: dict[str, str]) -> None:
     env.pop("VPHONE_CREATOR_USB_READY", None)
 
 
+def _firmware_cache(env: dict[str, str]) -> Path:
+    return Path(env.get("VSETUP_CACHE") or Path.home() / ".cache/vphone").expanduser().resolve()
+
+
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join(
@@ -94,6 +98,7 @@ def _native_env(paths: Paths) -> dict[str, str]:
         VSETUP_SRC=str(paths.backend),
         VSETUP_DEVICES=str(paths.vms),
         VSETUP_RELEASE=str(paths.data / "releases/vphone"),
+        VSETUP_CACHE=str(_firmware_cache(env)),
         VPHONE_RCODESIGN=str(paths.prefix / "bin/rcodesign"),
         VPHONE_APFS_KO=str(paths.backend / ".build/linux-apfs-rw/apfs.ko"),
         VC=str(
@@ -1419,7 +1424,8 @@ def _pipeline(
         env["VPHONE_FIRST_BOOT_QMP"] = str(qmp_path)
         state.update(run_dir=str(run_dir), first_boot_qmp=str(qmp_path))
         _atomic_json(state_path, state)
-        catalog = Path.home() / ".cache/vphone"
+        catalog = _firmware_cache(env)
+        env["VSETUP_CACHE"] = str(catalog)
         ios_file = catalog / profile.main_firmware.filename
         cloud_file = catalog / profile.cloud_os_firmware.filename
         state["firmware"] = _verified_firmware_stage(
