@@ -2,7 +2,7 @@
 
 Run an iPhone app built with xtool on a local Linux workstation. Install the app into a real iOS guest, interact with it, capture its screen, and run repeatable checks from the terminal or a local web console.
 
-Development status: CounterLab's iPhone 16 profile and functional checks pass in a real iOS 27.0.1 guest, including native scrolling, taps, Unicode input, navigation, and count persistence after app relaunch. A warm Release build with SDK 27.2 took 3.03 seconds. Clean creation is not accepted: DataMigrator still reports `success: false` for build `24A446`. Playback, app performance, repeatable cold startup, and Duo/iPad acceptance remain unverified. See the [current native results](docs/APP_WORKFLOW.md#current-iphone-16-result) for scope and evidence limits.
+Development status: CounterLab's iPhone 16 profile and functional checks pass in a real iOS 27.0.1 guest, including native scrolling, taps, Unicode input, navigation, and count persistence after app relaunch. A warm Release build with SDK 27.2 took 3.03 seconds. A separate closed-Duo trial accepted BruTV login input and rendered advancing HLS fixture video. Long-pause playback recovery remains unresolved. Clean creation is not accepted: DataMigrator still reports `success: false` for build `24A446`. App performance, repeatable cold startup, and complete Duo/iPad acceptance remain unverified. See the [current native results](docs/APP_WORKFLOW.md#current-iphone-16-result) for scope and evidence limits.
 
 Limulator uses an emulated ARM64 iPhone. UIKit and SwiftUI run inside iOS; the console displays frames from that guest. A remote Mac and replacement web UI are not the execution path.
 
