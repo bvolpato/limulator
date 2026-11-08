@@ -174,6 +174,12 @@ With that build, a physical Play tap after a 666.58-second pause restored `playi
 
 The combined `fa4c3b0a` bundle's worker was subsequently installed and its exact executable hash and confirmed cache marker were read back. Health, active geometry, foreground-app identification and BruTV accessibility inspection passed in the same closed-Duo session. Active-display capture refused the cover panel because its native identity lacks a hardware UUID; QEMU captures remain available. The worker also reports a pending MobileGestalt restart. This hot-update smoke check does not establish cold-start persistence or full acceptance of the combined bundle.
 
+The later `f922fdc` app build displays existing live-buffer notices, including the expiry explanation. Its Release build and full iPhone, iPad and Duo CI suites pass. That exact app was installed and its executable UUID verified in the research guest, where fixture video rendered. Actual expiry-notice appearance has not yet been observed natively.
+
+### iPad display-classification recovery
+
+An isolated iPad mini guest exposed a mismatch between its 326 PPI profile and the framebuffer's 95 PPI readback. A focused QEMU backport and launcher change corrected the native framebuffer to 326 PPI without changing its 1488 by 2266 pixels or scale 2. MobileGestalt retained the old answer until its generated cache was archived, removed using the existing display-change procedure, and the guest was cleanly shut down and booted. ProgressUI's native environment then reported supported screen class 28 instead of -1. The guest API was observed responsive about ten minutes after this cache-refresh boot. Fresh creation, migration success and CounterLab's iPad scenario remain unaccepted. See [the component fixes and evidence limits](UPSTREAM.md).
+
 ## Shortest path for each change
 
 | What changed | What to run |
