@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .protocols import ProtocolError
+
 if TYPE_CHECKING:
     from .service import DeviceService, Frame
 
@@ -36,6 +38,8 @@ _MAX_STEPS = 100
 _MAX_REPORT_RESULT_BYTES = 64 << 10
 _MAX_TREE_NODES = 100_000
 _WAIT_TEXT_POLL_SECONDS = 0.25
+_MAX_AX_ERROR_BODY_BYTES = 4096
+_AX_READINESS_ERRORS = frozenset({"AX element query failed (-25215)", "AX element query failed (-25216)"})
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
 _BUTTONS = {"home", "lock", "volume-up", "volume-down"}
 _FOLD_POSITIONS = {"closed", "book", "open"}
@@ -358,6 +362,24 @@ def _visible_matches(
     return matches
 
 
+def _ax_readiness_error(error: ProtocolError) -> str | None:
+    if error.status_code != 400 or not isinstance(error.details, bytes):
+        return None
+    if len(error.details) > _MAX_AX_ERROR_BODY_BYTES:
+        return None
+    try:
+        response = json.loads(error.details.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (RecursionError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(response, dict):
+        return None
+    detail = response.get("error")
+    if not isinstance(detail, dict) or detail.get("code") != "failed":
+        return None
+    message = detail.get("message")
+    return message if isinstance(message, str) and message in _AX_READINESS_ERRORS else None
+
+
 def _safe_result(value: Any) -> Any:
     try:
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
@@ -630,21 +652,40 @@ def _execute_action(
     if kind == "wait_text":
         started = time.monotonic()
         deadline = started + action["timeout"]
+        last_ax_error: str | None = None
+
+        def timeout_error() -> ScenarioError:
+            target = f" in AX element {action['identifier']!r}" if action["identifier"] else ""
+            mode = "exactly " if action["exact"] else ""
+            message = f"timed out waiting for visible text {mode}{action['text']!r}{target}"
+            if last_ax_error is not None:
+                message += f"; last AX readiness error: {last_ax_error}"
+            return ScenarioError(message)
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ScenarioError(f"timed out waiting for visible text: {action['text']!r}")
+                raise timeout_error()
+            try:
+                tree = service.tree(timeout=remaining)
+            except ProtocolError as exc:
+                last_ax_error = _ax_readiness_error(exc)
+                if last_ax_error is None:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise timeout_error()
+                time.sleep(min(_WAIT_TEXT_POLL_SECONDS, remaining))
+                continue
             matches = _visible_matches(
-                service.tree(timeout=remaining),
+                tree,
                 action["text"],
                 identifier=action["identifier"],
                 exact=action["exact"],
             )
             now = time.monotonic()
             if now >= deadline:
-                target = f" in AX element {action['identifier']!r}" if action["identifier"] else ""
-                mode = "exactly " if action["exact"] else ""
-                raise ScenarioError(f"timed out waiting for visible text {mode}{action['text']!r}{target}")
+                raise timeout_error()
             if matches:
                 return {
                     "text": action["text"],
@@ -655,9 +696,7 @@ def _execute_action(
                 }, None
             remaining = deadline - now
             if remaining <= 0:
-                target = f" in AX element {action['identifier']!r}" if action["identifier"] else ""
-                mode = "exactly " if action["exact"] else ""
-                raise ScenarioError(f"timed out waiting for visible text {mode}{action['text']!r}{target}")
+                raise timeout_error()
             time.sleep(min(_WAIT_TEXT_POLL_SECONDS, remaining))
     if kind == "assert_text":
         matches = _visible_matches(

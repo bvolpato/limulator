@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from limulator import scenarios
+from limulator.protocols import ProtocolError
 from limulator.scenarios import ScenarioError, run_scenario
 
 
@@ -98,6 +99,20 @@ class FakeService:
 
     def terminate(self, *args: Any) -> dict[str, Any]:
         return self._input("terminate", *args)
+
+
+class ScriptedTreeService(FakeService):
+    def __init__(self, responses: list[Any]) -> None:
+        super().__init__()
+        self.responses = responses
+
+    def tree(self, timeout: float = 60) -> Any:
+        self.tree_calls += 1
+        self.tree_timeouts.append(timeout)
+        response = self.responses[min(self.tree_calls - 1, len(self.responses) - 1)]
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _write_scenario(tmp_path: Path, value: Any) -> Path:
@@ -377,6 +392,118 @@ def test_wait_text_rejects_a_match_returned_after_its_deadline(tmp_path: Path) -
     assert report["steps"][0]["status"] == "failed"
     assert report["steps"][0]["duration_seconds"] >= 0.07
     assert service.tree_timeouts[0] <= 0.01
+    assert service.tree_calls == 1
+
+
+def _ax_readiness_error(
+    message: str = "AX element query failed (-25216)",
+    *,
+    code: str = "failed",
+    status_code: int = 400,
+    details: bytes | None = None,
+) -> ProtocolError:
+    if details is None:
+        details = json.dumps(
+            {"error": {"code": code, "message": message}, "id": 1, "type": "response"}
+        ).encode()
+    return ProtocolError("HTTP error from vphoned", status_code=status_code, details=details)
+
+
+@pytest.mark.parametrize("message", ["AX element query failed (-25215)", "AX element query failed (-25216)"])
+def test_wait_text_retries_ax_readiness_error_until_text_is_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    monkeypatch.setattr(scenarios.time, "sleep", lambda _seconds: None)
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 1}]},
+    )
+    service = ScriptedTreeService(
+        [_ax_readiness_error(message), [{"label": "Ready"}]],
+    )
+
+    report = run_scenario(service, path, tmp_path / "ax-ready")
+
+    assert report["status"] == "passed"
+    assert report["steps"][0]["result"]["matches"] == ["Ready"]
+    assert service.tree_calls == 2
+    assert len(service.tree_timeouts) == 2
+
+
+def test_wait_text_bounds_persistent_ax_readiness_errors_by_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [10.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 0.51}]},
+    )
+    service = ScriptedTreeService([_ax_readiness_error()])
+
+    with pytest.raises(
+        ScenarioError, match="last AX readiness error: AX element query failed \\(-25216\\)"
+    ) as error:
+        run_scenario(service, path, tmp_path / "ax-unavailable")
+
+    report = json.loads(error.value.report_path.read_text(encoding="utf-8"))
+    assert report["failure"]["error"].endswith("last AX readiness error: AX element query failed (-25216)")
+    assert report["screenshots"][0]["role"] == "failure"
+    assert (error.value.report_path.parent / "screenshots" / "failure.png").is_file()
+    assert service.tree_calls == 3
+    assert all(0 < timeout <= 0.51 for timeout in service.tree_timeouts)
+    assert now[0] == pytest.approx(10.51)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "code", "message"),
+    [
+        (500, "failed", "AX element query failed (-25216)"),
+        (400, "other", "AX element query failed (-25216)"),
+        (400, "failed", "AX element query failed (-25217)"),
+    ],
+)
+def test_wait_text_propagates_non_readiness_protocol_errors(
+    tmp_path: Path, status_code: int, code: str, message: str
+) -> None:
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 1}]},
+    )
+    protocol_error = _ax_readiness_error(message, code=code, status_code=status_code)
+    service = ScriptedTreeService([protocol_error])
+
+    with pytest.raises(ScenarioError) as error:
+        run_scenario(service, path, tmp_path / "other-ax-error")
+
+    report = json.loads(error.value.report_path.read_text(encoding="utf-8"))
+    assert report["failure"]["error"] == str(protocol_error)
+    assert report["failure"]["type"] == "ProtocolError"
+    assert service.tree_calls == 1
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        b"{invalid json",
+        b'{"error":{"code":"failed","message":"AX element query failed (-25216)"}}' + b" " * 4096,
+        b"[" * 1100 + b"]" * 1100,
+    ],
+)
+def test_wait_text_does_not_retry_malformed_or_oversized_ax_errors(tmp_path: Path, details: bytes) -> None:
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 1}]},
+    )
+    protocol_error = _ax_readiness_error(details=details)
+    service = ScriptedTreeService([protocol_error])
+
+    with pytest.raises(ScenarioError) as error:
+        run_scenario(service, path, tmp_path / "malformed-ax-error")
+
+    report = json.loads(error.value.report_path.read_text(encoding="utf-8"))
+    assert report["failure"]["error"] == str(protocol_error)
     assert service.tree_calls == 1
 
 
