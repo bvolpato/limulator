@@ -148,6 +148,8 @@ A later isolated-clone trial used only the FoldDisplay backports from merged ups
 
 Those metadata corrections did not resolve inner semantic input. In stable book posture, Add one's accessibility tap returned `tapped: true`; a later independent AX read still showed count `1`. The daemon continued reporting cover geometry of 678 by 466 points. The full scenario also exposed a separate transition issue: hinge settlement can precede a responsive SpringBoard orientation read. Waiting for fresh hinge evidence and allowing a bounded post-fold orientation read then passed a native closed-to-book capture scenario in 27.70 seconds. That is capture validation, not an input or performance pass. This trial does not advance the default CLI pin or establish complete Duo support.
 
+A controlled follow-up used CounterLab's own reported 951 by 669 point screen to normalize the Add one AX point into the daemon's 678 by 466 point coordinate space. That tap changed the native count from `1` to `2`. This supports the normalization mismatch as the input defect. It did not change the semantic API: arbitrary apps still need a trustworthy active-display geometry source, rather than dimensions inferred from their controls or supplied by a test app.
+
 ## Shortest path for each change
 
 | What changed | What to run |
