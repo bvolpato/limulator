@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,6 +74,30 @@ def _stub_doctor_host_probes(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
 
 
+def _stub_ready_doctor_host(monkeypatch):
+    original_run = subprocess.run
+    original_access = os.access
+
+    def run(command, *args, **kwargs):
+        if command in (["systemctl", "--user", "show-environment"], ["vulkaninfo", "--summary"]):
+            return subprocess.CompletedProcess(command, 0, "Vulkan Instance Version: 1.4\n", "")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: "/usr/bin/vulkaninfo" if name == "vulkaninfo" else None,
+    )
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        cli.os,
+        "access",
+        lambda path, mode: True if os.fspath(path) == "/dev/vhost-vsock" else original_access(path, mode),
+    )
+    monkeypatch.setattr(cli.shutil, "disk_usage", lambda _path: SimpleNamespace(free=100 << 30))
+
+
 def test_doctor_reports_missing_release_product_without_running_stale_wrapper(tmp_path, monkeypatch):
     paths, wrapper_marker, release = _doctor_paths(tmp_path, monkeypatch)
     _stub_doctor_host_probes(monkeypatch)
@@ -104,6 +129,50 @@ def test_doctor_runs_the_actual_release_product(tmp_path, monkeypatch):
     assert result["checks"]["firmware_cli_runs"] is True
     assert release_marker.read_text() == "release"
     assert not wrapper_marker.exists()
+
+
+def test_doctor_requires_a_nonempty_qemu_rom_in_its_data_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    paths, _wrapper_marker, release = _doctor_paths(tmp_path, monkeypatch)
+    qemu = paths.backend / "qemu/build/qemu-system-aarch64"
+    rom_dir = paths.backend / "qemu/build/qemu-bundle/usr/local/share/qemu"
+    _executable(
+        qemu,
+        "#!/bin/sh\n"
+        'case "$1 $2" in\n'
+        '  "-L help") printf "%s\\n" "$LIMULATOR_DOCTOR_QEMU_DATA_DIR" ;;\n'
+        '  "-machine help") printf "vresearch101\\n" ;;\n'
+        '  "-device apple-gfx-mmio,help") printf "apple-gfx-mmio\\n" ;;\n'
+        "  *) exit 2 ;;\n"
+        "esac\n",
+    )
+    _executable(release, "#!/bin/sh\nprintf 'vphone release product\\n'\n")
+    usbmuxd = paths.backend / ".build/usbmuxd-32k/usbmuxd"
+    apfs = paths.backend / ".build/linux-apfs-rw/apfs.ko"
+    usbmuxd.parent.mkdir(parents=True)
+    apfs.parent.mkdir(parents=True)
+    usbmuxd.touch()
+    apfs.touch()
+    monkeypatch.setenv("LIMULATOR_DOCTOR_QEMU_DATA_DIR", str(rom_dir))
+    _stub_ready_doctor_host(monkeypatch)
+
+    missing = cli.doctor(paths)
+    assert missing["ready"] is False
+    assert missing["checks"]["qemu_romfile"] is False
+    assert missing["tools"]["qemu_romfile"] is None
+
+    rom_dir.mkdir(parents=True)
+    rom = rom_dir / "efi-virtio.rom"
+    rom.touch()
+    empty = cli.doctor(paths)
+    assert empty["ready"] is False
+    assert empty["checks"]["qemu_romfile"] is False
+
+    rom.write_bytes(b"firmware rom")
+    complete = cli.doctor(paths)
+    assert complete["ready"] is True
+    assert complete["checks"]["qemu_romfile"] is True
+    assert complete["tools"]["qemu_romfile"] == rom
 
 
 def test_backend_cli_bootstrap_requests_release_configuration(tmp_path):

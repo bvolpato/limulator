@@ -59,6 +59,35 @@ def doctor(paths: Paths) -> dict:
         "apfs": paths.backend / ".build/linux-apfs-rw/apfs.ko",
     }
     checks = {name: path.exists() for name, path in tools.items()}
+    qemu_data_dirs = []
+    try:
+        qemu_data = subprocess.run(
+            [str(tools["qemu"]), "-L", "help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=environment,
+            cwd=paths.backend,
+        )
+        if qemu_data.returncode == 0:
+            for line in qemu_data.stdout.splitlines():
+                if line.strip():
+                    path = Path(line.strip())
+                    qemu_data_dirs.append(path if path.is_absolute() else paths.backend / path)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # The pinned virtio-net PCI device loads this ROM by default.
+    qemu_romfile = None
+    for directory in (paths.backend, *qemu_data_dirs):
+        candidate = directory / "efi-virtio.rom"
+        try:
+            if candidate.is_file() and os.access(candidate, os.R_OK) and candidate.stat().st_size > 0:
+                qemu_romfile = candidate
+                break
+        except OSError:
+            continue
+    checks["qemu_romfile"] = qemu_romfile is not None
+    tools["qemu_romfile"] = qemu_romfile
     probes = {
         "qemu_machine": ([str(tools["qemu"]), "-machine", "help"], "vresearch101"),
         "gpu_device": ([str(tools["qemu"]), "-device", "apple-gfx-mmio,help"], "apple-gfx-mmio"),
