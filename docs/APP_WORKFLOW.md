@@ -154,6 +154,8 @@ A later experimental worker used native FrontBoard geometry and a scoped Icli ba
 
 BruTV's M3U tab did not change after either semantic input or a controlled cover-display QMP tap. A successful dispatch response therefore does not establish delivery to the app. General input, moving-video playback, repeatable cold startup, clean iPad creation and the full Duo scenario remain unverified. These experiments do not advance the default dependency pins or establish store distribution readiness. See [the separate upstream proposals](UPSTREAM.md) for the geometry, health and cached-worker changes.
 
+A subsequent worker update and one clean guest shutdown and cold start retained the new worker's exact hash and confirmed its cache marker. This tests that experimental cached update path, not repeatable startup for the default bundle. During separate bounded observations of one QMP tap and one guest-native tap, neither BruTV nor SpringBoard reported a call to `UIApplication.sendEvent:`. After the cold boot, the native input-device list lacked the virtual USB touchscreen, and the serial log reported HID-driver launch failures. Driver registration and HID routing need verification before further coordinate changes; these observations do not establish the failure's cause.
+
 ## Shortest path for each change
 
 | What changed | What to run |
