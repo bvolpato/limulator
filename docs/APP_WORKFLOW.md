@@ -150,6 +150,10 @@ Those metadata corrections did not resolve inner semantic input. In stable book 
 
 A controlled follow-up used CounterLab's own reported 951 by 669 point screen to normalize the Add one AX point into the daemon's 678 by 466 point coordinate space. That tap changed the native count from `1` to `2`. This supports the normalization mismatch as the input defect. It did not change the semantic API: arbitrary apps still need a trustworthy active-display geometry source, rather than dimensions inferred from their controls or supplied by a test app.
 
+A later experimental worker used native FrontBoard geometry and a scoped Icli backport. An inner-display semantic tap changed CounterLab's count from `2` to `3`. A fresh BruTV device build using SDK 27.2 was also installed and launched as a user app in the isolated research guest. Its login screen appeared in a raw native inner-display capture at 2007 by 2853 pixels. The capture used matching display identity, scale and bounds before and after rendering; it applied no resize or rotation. The resulting image was sideways, so orientation mapping remains unverified.
+
+BruTV's M3U tab did not change after either semantic input or a controlled cover-display QMP tap. A successful dispatch response therefore does not establish delivery to the app. General input, moving-video playback, repeatable cold startup, clean iPad creation and the full Duo scenario remain unverified. These experiments do not advance the default dependency pins or establish store distribution readiness. See [the separate upstream proposals](UPSTREAM.md) for the geometry, health and cached-worker changes.
+
 ## Shortest path for each change
 
 | What changed | What to run |
