@@ -468,6 +468,9 @@ private struct CounterDetailView: View {
         Form {
             Section("Saved count") {
                 LabeledContent("Current value", value: count.formatted())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Current value")
+                    .accessibilityValue(count.formatted())
                     .accessibilityIdentifier("counterlab.details.count")
             }
 
