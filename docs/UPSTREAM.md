@@ -36,7 +36,9 @@ These are proposals, not merged dependencies. The QEMU PR uses generic VirtIO an
 
 A later native CFW installation exposed a separate subprocess capture hang: the child had exited, but Linux Foundation omitted an EOF readability callback. [vphone-cli #856](https://github.com/Lakr233/vphone-cli/pull/856) replaces callback-based collection with concurrent pipe readers. The standalone regression reproduces the old hang and checks complete output and exit status with the replacement. This fix is separate from the former patch migration.
 
-[vphone-linux #40](https://github.com/YahiaAngelo/vphone-linux/pull/40) corrects the `iPhone17,3` catalog label to “iPhone 16.” Catalog validation, the device list, and a setup dry run verify the displayed name.
+[vphone-linux #40](https://github.com/YahiaAngelo/vphone-linux/pull/40) corrects the catalog names for `iPhone17,3` and `iPad16,1` to “iPhone 16” and “iPad mini (A17 Pro),” and fixes the matching iPhone README examples. Catalog validation, the device list, and setup dry runs verify the displayed names.
+
+[vphone-linux #41](https://github.com/YahiaAngelo/vphone-linux/pull/41) fixes toolbar startup on Linux Python builds that omit `socket.AF_VSOCK`. The fallback packs the Linux socket address and uses a bounded nonblocking connection; Python builds with native VSOCK support retain their existing path. Regression tests, a guest-free kernel loopback, and a read-only guest screen query validate the connection. These checks do not establish toolbar button behavior.
 
 Upstream contributions use the projects' own interfaces and terminology. The backend's public controls use `VPHONE_*`, including private USB readiness, first-boot QMP, timeouts and optional transport tracing. Limulator translates its compatibility inputs locally; upstream source does not need Limulator-specific environment variables. The integration branch combines component changes, while each upstream PR explains its own failure trigger, impact, and validation limits.
 

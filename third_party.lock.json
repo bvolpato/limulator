@@ -2,7 +2,7 @@
   "schema_version": 1,
   "backend": {
     "repository": "https://github.com/bvolpato/vphone-linux.git",
-    "revision": "7fb9ea30dc9c87d45850f132cd6b882b9303fc40"
+    "revision": "363c82aa4a75ef64f3d99764274bf42e8daa001d"
   },
   "submodules": {
     "qemu": {"repository": "https://github.com/bvolpato/qemu-vphone.git", "revision": "fa07541ef65ea1a2963483ded299557152c754cb"},
