@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import errno
+import fcntl
 import json
 import os
 import pwd
@@ -12,6 +13,7 @@ import re
 import select
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -33,6 +35,8 @@ def mounts() -> list[dict]:
                 "target": unescape(fields[4]),
                 "type": fields[separator + 1],
                 "source": unescape(fields[separator + 2]),
+                "device": fields[2],
+                "options": fields[5].split(","),
                 "record": line,
             }
         )
@@ -101,6 +105,254 @@ def _signal(fd: int, value: int) -> None:
 
 def _cfw_target(target: str) -> bool:
     return re.fullmatch(r"/var/tmp/vphone-cfw\.[A-Za-z0-9]{8}/(?:system|xart|preboot)", target) is not None
+
+
+def _cryptex_target(target: str) -> bool:
+    return re.fullmatch(r"/var/tmp/vphone-cfw\.[A-Za-z0-9]{8}/mnt-(?:os|app)", target) is not None
+
+
+def _loop_status(fd: int) -> dict | None:
+    data = bytearray(232)  # Linux loop_info64, including the trailing lo_init fields.
+    try:
+        fcntl.ioctl(fd, 0x4C05, data)  # LOOP_GET_STATUS64
+    except OSError as error:
+        if error.errno == errno.ENXIO:
+            return None
+        raise
+    device, inode, _, offset, limit, number, encryption, key_size, flags = struct.unpack_from(
+        "=QQQQQIIII", data
+    )
+    # loop_info64 uses huge_encode_dev/new_encode_dev, not the kernel's
+    # internal 12:20 dev_t layout. Require compatibility with stat.st_dev.
+    major = (device & 0xFFF00) >> 8
+    minor = (device & 0xFF) | ((device >> 12) & 0xFFF00)
+    if device >> 32 or os.makedev(major, minor) != device:
+        raise RuntimeError(f"unsupported loop backing-device encoding: {device}")
+    return {
+        "backing": (device, inode),
+        "number": number,
+        "offset": offset,
+        "limit": limit,
+        "encryption": encryption,
+        "key_size": key_size,
+        "flags": flags,
+        "filename": os.fsdecode(bytes(data[56:120]).split(b"\0", 1)[0]),
+        "record": bytes(data),
+    }
+
+
+def _open_loop(path: str, *, exclusive: bool = False) -> int:
+    return os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | (os.O_EXCL if exclusive else 0))
+
+
+def _loop_states() -> list[dict]:
+    result = []
+    for device in Path("/sys/class/block").glob("loop[0-9]*"):
+        if not re.fullmatch(r"loop[0-9]+", device.name):
+            continue
+        path = f"/dev/{device.name}"
+        try:
+            fd = _open_loop(path)
+        except FileNotFoundError:
+            continue
+        try:
+            info = os.fstat(fd)
+            status = _loop_status(fd)
+            if not stat.S_ISBLK(info.st_mode) or os.major(info.st_rdev) != 7:
+                raise RuntimeError(f"unexpected loop device identity: {path}")
+            if status is not None:
+                result.append(status | {"path": path, "node": (info.st_dev, info.st_ino, info.st_rdev)})
+        finally:
+            os.close(fd)
+    return result
+
+
+def _require_no_unproven_cfw_loops(proven: tuple[dict, ...] = ()) -> None:
+    for loop in _loop_states():
+        if (
+            re.fullmatch(
+                r"/var/tmp/vphone-cfw\.[A-Za-z0-9]{8}/(?:SystemOS(?:-source)?|AppOS)\.dmg",
+                loop["filename"],
+            )
+            and loop not in proven
+        ):
+            # A name can require refusal, but never establishes authority to detach.
+            raise RuntimeError(f"creation cleanup has an unproven CFW loop attachment: {loop['path']}")
+
+
+def _file_identity(info) -> tuple:
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _verify_cryptex_file(row: dict) -> None:
+    directory = row["directory"]
+    current = directory.lstat()
+    info = os.fstat(row["directory_fd"])
+    if (
+        (current.st_dev, current.st_ino) != row["directory_identity"]
+        or (info.st_dev, info.st_ino) != row["directory_identity"]
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise RuntimeError(f"creation Cryptex directory identity changed: {directory}")
+    info = os.fstat(row["file_fd"])
+    current = os.stat(row["file"], dir_fd=row["directory_fd"], follow_symlinks=False)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != 0
+        or info.st_nlink != 1
+        or _file_identity(info) != row["file_identity"]
+        or _file_identity(current) != row["file_identity"]
+    ):
+        raise RuntimeError(f"creation Cryptex backing file identity changed: {directory / row['file']}")
+
+
+def _cryptex_attachments(owned_mounts: list, before: list[dict], baseline_records: set[str], resources):
+    images = []
+    directories = {Path(mount["target"]).parent: (fd, identity) for mount, _, fd, identity in owned_mounts}
+    for directory, (directory_fd, directory_identity) in directories.items():
+        for name, target in (
+            ("SystemOS.dmg", "mnt-os"),
+            ("SystemOS-source.dmg", "mnt-os"),
+            ("AppOS.dmg", "mnt-app"),
+        ):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory_fd)
+            except FileNotFoundError:
+                continue
+            resources.callback(os.close, fd)
+            row = {
+                "directory": directory,
+                "directory_fd": directory_fd,
+                "directory_identity": directory_identity,
+                "file": name,
+                "file_fd": fd,
+                "file_identity": _file_identity(os.fstat(fd)),
+                "target": str(directory / target),
+            }
+            _verify_cryptex_file(row)
+            images.append(row)
+    if not images:
+        return images, []
+    result = []
+    for loop in _loop_states():
+        matching = [row for row in images if row["file_identity"][:2] == loop["backing"]]
+        if not matching:
+            continue
+        if (
+            len(matching) != 1
+            or loop["flags"] != 1  # LO_FLAGS_READ_ONLY, with no other attachment modes.
+            or loop["offset"] != 0
+            or loop["limit"] != 0
+            or loop["encryption"] != 0
+            or loop["key_size"] != 0
+            or loop["path"] != f"/dev/loop{loop['number']}"
+        ):
+            raise RuntimeError(f"creation Cryptex loop ownership could not be proven: {loop}")
+        row = matching[0] | {"loop": loop}
+        device = f"{os.major(loop['node'][2])}:{os.minor(loop['node'][2])}"
+        matches = [mount for mount in before if mount["target"] == row["target"]]
+        if matches and (
+            len(matches) != 1
+            or matches[0]["record"] in baseline_records
+            or matches[0]["type"] != "apfs"
+            or matches[0]["source"] != loop["path"]
+            or matches[0].get("device") != device
+            or "ro" not in matches[0].get("options", [])
+        ):
+            raise RuntimeError(f"creation Cryptex mount ownership could not be proven: {matches}")
+        row["mount"] = matches[0] if matches else None
+        if any(
+            (mount["source"] == loop["path"] or mount.get("device") == device) and mount != row["mount"]
+            for mount in before
+        ):
+            raise RuntimeError(f"creation Cryptex loop has a foreign mount: {loop}")
+        result.append(row)
+    return images, result
+
+
+def _require_no_cryptex_loops(images: list[dict]) -> None:
+    for image in images:
+        _verify_cryptex_file(image)
+    if any(loop["backing"] == image["file_identity"][:2] for loop in _loop_states() for image in images):
+        raise RuntimeError("creation cleanup has residual Cryptex loop attachments")
+
+
+def _require_unused_loop(loop: dict) -> None:
+    device = f"{os.major(loop['node'][2])}:{os.minor(loop['node'][2])}"
+    if any(mount["source"] == loop["path"] or mount.get("device") == device for mount in mounts()):
+        raise RuntimeError(f"creation Cryptex loop remains mounted: {loop['path']}")
+    sysfs = Path(f"/sys/dev/block/{device}")
+    if any(re.fullmatch(rf"loop{loop['number']}p[0-9]+", child.name) for child in sysfs.iterdir()):
+        raise RuntimeError(f"creation Cryptex loop has partitions: {loop['path']}")
+    if list((sysfs / "holders").iterdir()):
+        raise RuntimeError(f"creation Cryptex loop has device holders: {loop['path']}")
+    for process in Path("/proc").iterdir():
+        if not process.name.isdigit() or int(process.name) == os.getpid():
+            continue
+        try:
+            for descriptor in (process / "fd").iterdir():
+                try:
+                    info = descriptor.stat()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if stat.S_ISBLK(info.st_mode) and info.st_rdev == loop["node"][2]:
+                    raise RuntimeError(f"creation Cryptex loop has an open user: PID {process.name}")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+
+
+def _verify_loop(fd: int, loop: dict) -> dict | None:
+    info = os.fstat(fd)
+    status = _loop_status(fd)
+    if (
+        not stat.S_ISBLK(info.st_mode)
+        or (info.st_dev, info.st_ino, info.st_rdev) != loop["node"]
+        or (status is not None and status["record"] != loop["record"])
+    ):
+        raise RuntimeError(f"creation Cryptex loop identity changed: {loop['path']}")
+    return status
+
+
+def _cleanup_cryptex(attachments: list[dict], require_invocation) -> None:
+    for row in reversed(attachments):
+        _verify_cryptex_file(row)
+        mount = row["mount"]
+        current = [item for item in mounts() if item["target"] == row["target"]]
+        fd = _open_loop(row["loop"]["path"])
+        try:
+            if _verify_loop(fd, row["loop"]) is None and current:
+                raise RuntimeError(f"creation Cryptex loop disappeared while mounted: {row['loop']['path']}")
+        finally:
+            os.close(fd)
+        if current:
+            if current != [mount] or any(item["target"].startswith(row["target"] + "/") for item in mounts()):
+                raise RuntimeError(f"creation Cryptex mount identity changed before unmount: {current}")
+            require_invocation()
+            result = subprocess.run(
+                ["/usr/bin/umount", "--", row["target"]], capture_output=True, text=True, timeout=15
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    f"owned creation Cryptex mount did not detach: {mount}; {result.stderr.strip()}"
+                )
+        fd = _open_loop(row["loop"]["path"], exclusive=True)
+        try:
+            status = _verify_loop(fd, row["loop"])
+            if status is None:
+                continue
+            _require_unused_loop(row["loop"])
+            _verify_cryptex_file(row)
+            require_invocation()
+            if _loop_status(fd) != status:
+                raise RuntimeError(
+                    f"creation Cryptex loop identity changed before detach: {row['loop']['path']}"
+                )
+            fcntl.ioctl(fd, 0x4C01)  # LOOP_CLR_FD on the verified descriptor, never a re-resolved path.
+        finally:
+            os.close(fd)
+        if any(current["path"] == row["loop"]["path"] for current in _loop_states()):
+            raise RuntimeError(f"creation Cryptex loop remains attached: {row['loop']['path']}")
 
 
 def _cfw_install_client(identity: dict) -> bool:
@@ -191,12 +443,17 @@ def _inactive_scope_is_empty(
         mount
         for mount in before
         if mount["record"] not in baseline_records
-        and (_cfw_target(mount["target"]) or mount["target"] in candidate_targets)
+        and (
+            _cfw_target(mount["target"])
+            or _cryptex_target(mount["target"])
+            or mount["target"] in candidate_targets
+        )
     ]
     if identities or remaining_mounts:
         raise RuntimeError(
             f"inactive creation scope has residual resources: processes={identities}; mounts={remaining_mounts}"
         )
+    _require_no_unproven_cfw_loops()
     return True
 
 
@@ -281,6 +538,7 @@ def cleanup(
         if mount["record"] not in baseline_records
         and (
             _cfw_target(mount["target"])
+            or _cryptex_target(mount["target"])
             or any(mount["target"] in identity["argv"] for identity in identities)
         )
     ]
@@ -339,15 +597,54 @@ def cleanup(
             ):
                 raise RuntimeError(f"creation SSHFS mount identity differs: {identity}; mounts={matches}")
             owned_mounts.append((matches[0], identity, directory_fd, (info.st_dev, info.st_ino)))
-        unknown = [m for m in candidates if m not in [row[0] for row in owned_mounts]]
+        images, cryptex = _cryptex_attachments(owned_mounts, before, baseline_records, resources)
+        proven_mounts = [row[0] for row in owned_mounts] + [row["mount"] for row in cryptex]
+        unknown = [m for m in candidates if m not in proven_mounts]
         if unknown:
             raise RuntimeError(f"creation mount ownership could not be proven: {unknown}")
+        _require_no_unproven_cfw_loops(tuple(row["loop"] for row in cryptex))
         cfw_clients = [(identity, fd) for identity, fd in pinned if _cfw_install_client(identity)]
         if len(cfw_clients) > 1:
             raise RuntimeError(f"multiple creation CFW install clients are active: {cfw_clients}")
         if cfw_clients:
             client, fd = cfw_clients[0]
             _stop_cfw_install_client(client, fd, unit, uid, group, expected_invocation_id, scope_owned)
+        _require_active_invocation(_unit_properties(unit, uid), group, expected_invocation_id, scope_owned)
+        late = [
+            identity
+            for identity in _scope_processes(group)
+            if identity not in identities or Path(identity["exe"]).name in ("losetup", "mount")
+        ]
+        if late:
+            raise RuntimeError(f"creation resource producers remain active or changed: {late}")
+        for row in cryptex:
+            _verify_cryptex_file(row)
+        current_mounts = mounts()
+        current_images, current_cryptex = _cryptex_attachments(
+            owned_mounts, current_mounts, baseline_records, resources
+        )
+        images.extend(current_images)
+        for row in current_cryptex:
+            if not any(
+                row["loop"] == old["loop"]
+                and row["mount"] == old["mount"]
+                and row["file_identity"] == old["file_identity"]
+                for old in cryptex
+            ):
+                raise RuntimeError(f"creation Cryptex attachment changed after installer exit: {row['loop']}")
+        if any(
+            mount["record"] not in baseline_records
+            and (_cfw_target(mount["target"]) or _cryptex_target(mount["target"]))
+            and mount not in proven_mounts
+            for mount in current_mounts
+        ):
+            raise RuntimeError("creation mounts changed after installer exit")
+        _cleanup_cryptex(
+            cryptex,
+            lambda: _require_active_invocation(
+                _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
+            ),
+        )
         remaining_pinned = [(identity, fd) for identity, fd in pinned if not _cfw_install_client(identity)]
         for mount, identity, directory_fd, directory_identity in owned_mounts:
             current = Path(mount["target"]).parent.lstat()
@@ -397,15 +694,25 @@ def cleanup(
                     baseline_records,
                     candidate_targets,
                 ):
+                    if images:
+                        _require_no_cryptex_loops(images)
+                    _require_no_unproven_cfw_loops()
                     return
                 survivors = _scope_processes(group)
                 remaining_mounts = [
                     m
                     for m in mounts()
                     if m["record"] not in baseline_records
-                    and (_cfw_target(m["target"]) or any(m["target"] == old["target"] for old in candidates))
+                    and (
+                        _cfw_target(m["target"])
+                        or _cryptex_target(m["target"])
+                        or any(m["target"] == old["target"] for old in candidates)
+                    )
                 ]
                 if not survivors and not remaining_mounts:
+                    if images:
+                        _require_no_cryptex_loops(images)
+                    _require_no_unproven_cfw_loops()
                     return
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

@@ -1,3 +1,4 @@
+import fcntl
 import hashlib
 import json
 import os
@@ -1086,6 +1087,7 @@ def test_launch_refusal_does_not_clean_an_unproven_scope(catalog, monkeypatch, s
     monkeypatch.setattr(creator, "_sudo_shim", lambda *_: None)
     monkeypatch.setattr(creator._USBHelpers, "start", lambda self: None)
     monkeypatch.setattr(creator._USBHelpers, "close", lambda self: None)
+    monkeypatch.setattr(_creation_cleanup, "_loop_states", lambda: [], raising=False)
     monkeypatch.setattr(
         creator.subprocess,
         "Popen",
@@ -1213,6 +1215,7 @@ def cleanup_scope(monkeypatch):
     monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: alive.get(pid))
     monkeypatch.setattr(_creation_cleanup, "_pidfd", lambda pid: os.open("/dev/null", os.O_RDONLY))
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [])
+    monkeypatch.setattr(_creation_cleanup, "_loop_states", lambda: [], raising=False)
     return unit, boot, identity, alive, _CREATION_INVOCATION_ID
 
 
@@ -2457,3 +2460,400 @@ def test_native_python_selection_refuses_existing_file_or_missing_vsock(catalog,
     with pytest.raises(RuntimeError, match="AF_VSOCK support"):
         creator._native_python_shim(empty)
     assert list(empty.iterdir()) == []
+
+
+@pytest.fixture
+def cryptex_cleanup_scope(cleanup_scope, tmp_path, monkeypatch):
+    unit, boot, sshfs, alive, invocation_id = cleanup_scope
+    directory = tmp_path / "vphone-cfw.aabbccdd"
+    directory.mkdir(mode=0o700)
+    ssh_target = str(directory / "system")
+    sshfs["argv"] = ["/usr/bin/sshfs", "-f", "root@vphone:/mnt1", ssh_target]
+    client = dict(sshfs, pid=4444, exe="/opt/vphone-cli", argv=["/opt/vphone-cli", "cfw", "install"])
+    alive[client["pid"]] = client
+    attached = [
+        {
+            "id": "1",
+            "target": ssh_target,
+            "source": "root@vphone:/mnt1",
+            "type": "fuse.sshfs",
+            "record": "sshfs",
+        }
+    ]
+    loops = {}
+    for index, (image, target) in enumerate((("SystemOS.dmg", "mnt-os"), ("AppOS.dmg", "mnt-app")), 40):
+        path = directory / image
+        path.write_bytes(b"owned image")
+        info = path.stat()
+        device = f"/dev/loop{index}"
+        loops[device] = {
+            "path": device,
+            "node": (1, 9000 + index, os.makedev(7, index)),
+            "backing": (info.st_dev, info.st_ino),
+            "number": index,
+            "offset": 0,
+            "limit": 0,
+            "encryption": 0,
+            "key_size": 0,
+            "flags": 1,
+            "filename": f"/var/tmp/vphone-cfw.aabbccdd/{image}",
+            "record": image.encode(),
+        }
+        attached.append(
+            {
+                "id": str(index),
+                "target": str(directory / target),
+                "source": device,
+                "type": "apfs",
+                "device": f"7:{index}",
+                "options": ["ro"],
+                "record": target,
+            }
+        )
+        (tmp_path / "sys/dev/block" / f"7:{index}" / "holders").mkdir(parents=True)
+    (tmp_path / "proc").mkdir()
+    real_path = _creation_cleanup.Path
+
+    def host_path(value):
+        value = str(value)
+        if value == "/proc" or value.startswith("/sys/dev/block/"):
+            return tmp_path / value.lstrip("/")
+        return real_path(value)
+
+    monkeypatch.setattr(_creation_cleanup, "Path", host_path)
+    monkeypatch.setattr(_creation_cleanup, "_cfw_target", lambda value: value == ssh_target)
+    monkeypatch.setattr(
+        _creation_cleanup,
+        "_cryptex_target",
+        lambda value: value in {str(directory / "mnt-os"), str(directory / "mnt-app")},
+        raising=False,
+    )
+    monkeypatch.setattr(_creation_cleanup, "mounts", lambda: list(attached))
+    monkeypatch.setattr(
+        _creation_cleanup, "_loop_states", lambda: [dict(loop) for loop in loops.values()], raising=False
+    )
+    process_fds, loop_fds = {}, {}
+    actions = []
+    state = SimpleNamespace(after_client_stop=None, after_unmount=None, alive=alive, identity=sshfs)
+    properties = {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "InvocationID": invocation_id,
+        "ControlGroup": sshfs["cgroup"].strip()[3:],
+    }
+    monkeypatch.setattr(_creation_cleanup, "_unit_properties", lambda *_: dict(properties))
+
+    def pin(pid):
+        fd = os.open("/dev/null", os.O_RDONLY)
+        process_fds[fd] = pid
+        return fd
+
+    def open_loop(path, *, exclusive=False):
+        fd = os.open("/dev/null", os.O_RDONLY)
+        loop_fds[fd] = path
+        return fd
+
+    real_fstat = os.fstat
+    real_close = os.close
+
+    def close(fd):
+        loop_fds.pop(fd, None)
+        real_close(fd)
+
+    def metadata(fd):
+        if fd in loop_fds:
+            dev, ino, rdev = loops[loop_fds[fd]]["node"]
+            return SimpleNamespace(st_mode=stat.S_IFBLK | 0o600, st_dev=dev, st_ino=ino, st_rdev=rdev)
+        info = real_fstat(fd)
+        values = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+        return SimpleNamespace(**(values | {"st_uid": 0}))
+
+    def loop_status(fd):
+        loop = loops.get(loop_fds[fd])
+        return {key: value for key, value in loop.items() if key not in ("path", "node")} if loop else None
+
+    def ioctl(fd, request):
+        assert request == 0x4C01
+        path = loop_fds[fd]
+        actions.append(("detach", path))
+        loops.pop(path)
+
+    def signal_process(fd, value):
+        pid = process_fds[fd]
+        actions.append(("signal", pid, value))
+        alive.pop(pid)
+        if pid == client["pid"] and state.after_client_stop:
+            state.after_client_stop()
+
+    def unmount(command, **_kwargs):
+        target = command[-1]
+        assert command == (
+            ["/usr/bin/umount", "--", target]
+            if target != ssh_target
+            else ["/usr/bin/fusermount3", "-u", target]
+        )
+        actions.append(("unmount", target))
+        attached[:] = [mount for mount in attached if mount["target"] != target]
+        if state.after_unmount:
+            state.after_unmount(target)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(_creation_cleanup, "_pidfd", pin)
+    monkeypatch.setattr(_creation_cleanup, "_signal", signal_process)
+    monkeypatch.setattr(_creation_cleanup, "_open_loop", open_loop, raising=False)
+    monkeypatch.setattr(_creation_cleanup, "_loop_status", loop_status, raising=False)
+    monkeypatch.setattr(_creation_cleanup.os, "fstat", metadata)
+    monkeypatch.setattr(_creation_cleanup.os, "close", close)
+    monkeypatch.setattr(fcntl, "ioctl", ioctl)
+    monkeypatch.setattr(_creation_cleanup.subprocess, "run", unmount)
+    state.run = lambda baseline=(): _creation_cleanup.cleanup(
+        unit, 1000, boot, list(baseline), scope_owned=True, expected_invocation_id=invocation_id
+    )
+    return state, directory, attached, loops, actions, properties, tmp_path
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_scope_cleanup_detaches_owned_cryptex_before_sshfs(cryptex_cleanup_scope, mounted):
+    state, directory, attached, loops, actions, _, _ = cryptex_cleanup_scope
+    if not mounted:
+        attached[:] = [mount for mount in attached if mount["type"] == "fuse.sshfs"]
+    state.run()
+    assert loops == {}
+    assert attached == []
+    assert actions[0] == ("signal", 4444, creator.signal.SIGTERM)
+    ssh_unmount = actions.index(("unmount", str(directory / "system")))
+    assert all(index < ssh_unmount for index, action in enumerate(actions) if action[0] == "detach")
+    if mounted:
+        for number, target in ((40, "mnt-os"), (41, "mnt-app")):
+            assert actions.index(("unmount", str(directory / target))) < actions.index(
+                ("detach", f"/dev/loop{number}")
+            )
+    assert actions[-1] == ("signal", 4321, creator.signal.SIGTERM)
+
+
+@pytest.mark.parametrize("foreign", ["writable", "backing", "mount", "baseline", "hardlink", "symlink"])
+def test_scope_cleanup_refuses_unproven_cryptex_before_mutation(cryptex_cleanup_scope, foreign):
+    state, directory, attached, loops, actions, _, _ = cryptex_cleanup_scope
+    baseline = []
+    if foreign == "writable":
+        loops["/dev/loop41"]["flags"] = 0
+    elif foreign == "backing":
+        loops["/dev/loop41"]["backing"] = (1, 2)
+    elif foreign == "mount":
+        attached.append(dict(attached[-1], target="/foreign/mount", record="foreign mount"))
+    elif foreign == "baseline":
+        baseline = [dict(attached[-1])]
+    elif foreign == "hardlink":
+        os.link(directory / "AppOS.dmg", directory / "foreign-image")
+    else:
+        (directory / "AppOS.dmg").rename(directory / "actual-image")
+        (directory / "AppOS.dmg").symlink_to("actual-image")
+    with pytest.raises((RuntimeError, OSError)):
+        state.run(baseline)
+    assert actions == []
+    assert loops
+
+
+@pytest.mark.parametrize("replacement", ["directory", "file", "mount", "invocation"])
+def test_scope_cleanup_preserves_replacements_before_cryptex_unmount(cryptex_cleanup_scope, replacement):
+    state, directory, attached, loops, actions, properties, _ = cryptex_cleanup_scope
+
+    def replace():
+        if replacement == "directory":
+            directory.rename(directory.with_name("old-directory"))
+            directory.mkdir(mode=0o700)
+        elif replacement == "file":
+            (directory / "AppOS.dmg").rename(directory / "old-image")
+            (directory / "AppOS.dmg").write_bytes(b"replacement")
+        elif replacement == "mount":
+            attached[-1] = dict(attached[-1], source="/dev/foreign", record="replacement mount")
+        else:
+            properties["InvocationID"] = "b" * 32
+
+    state.after_client_stop = replace
+    with pytest.raises(RuntimeError, match="identity changed|InvocationID|ownership could not be proven"):
+        state.run()
+    assert actions == [("signal", 4444, creator.signal.SIGTERM)]
+    assert loops
+
+
+@pytest.mark.parametrize("replacement", ["loop", "invocation", "holder", "partition", "open_user"])
+def test_scope_cleanup_preserves_busy_or_replaced_loop_before_detach(
+    cryptex_cleanup_scope, monkeypatch, replacement
+):
+    state, directory, _, loops, actions, properties, temporary = cryptex_cleanup_scope
+
+    def replace(target):
+        if target != str(directory / "mnt-app"):
+            return
+        if replacement == "loop":
+            loops["/dev/loop41"] = dict(loops["/dev/loop41"], backing=(2, 3), record=b"foreign attachment")
+        elif replacement == "invocation":
+            properties["InvocationID"] = "b" * 32
+        elif replacement == "holder":
+            (temporary / "sys/dev/block/7:41/holders/foreign").touch()
+        elif replacement == "partition":
+            (temporary / "sys/dev/block/7:41/loop41p1").mkdir()
+        else:
+            descriptor = temporary / "proc/999/fd/3"
+            descriptor.parent.mkdir(parents=True)
+            descriptor.touch()
+            real_stat = os.stat
+
+            def metadata(path, *args, **kwargs):
+                if str(path) == str(descriptor):
+                    return SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=os.makedev(7, 41))
+                return real_stat(path, *args, **kwargs)
+
+            monkeypatch.setattr(_creation_cleanup.os, "stat", metadata)
+
+    state.after_unmount = replace
+    with pytest.raises(RuntimeError, match="identity changed|InvocationID|holders|partitions|open user"):
+        state.run()
+    assert actions == [("signal", 4444, creator.signal.SIGTERM), ("unmount", str(directory / "mnt-app"))]
+    assert loops
+
+
+@pytest.mark.parametrize("late", ["existing_producer", "new_process", "new_loop", "new_mount"])
+def test_scope_cleanup_refuses_late_creation_resources(cryptex_cleanup_scope, late):
+    state, directory, attached, loops, actions, _, _ = cryptex_cleanup_scope
+    if late == "existing_producer":
+        state.alive[5555] = dict(state.identity, pid=5555, exe="/usr/sbin/losetup", argv=["losetup"])
+    if late == "new_loop":
+        attached[:] = [mount for mount in attached if mount["type"] == "fuse.sshfs"]
+        new_loop = loops["/dev/loop41"]
+        loops.clear()
+    if late == "new_mount":
+        new_mount = attached.pop()
+
+    def add_resource():
+        if late == "new_process":
+            state.alive[5555] = dict(state.identity, pid=5555, exe="/usr/sbin/losetup", argv=["losetup"])
+        elif late == "new_loop":
+            loops["/dev/loop41"] = new_loop
+        elif late == "new_mount":
+            attached.append(new_mount)
+
+    state.after_client_stop = add_resource
+    with pytest.raises(RuntimeError, match="resource producers|attachment changed"):
+        state.run()
+    assert actions == [("signal", 4444, creator.signal.SIGTERM)]
+    assert attached
+    assert loops
+
+
+def test_scope_cleanup_rechecks_loops_before_reporting_success(cryptex_cleanup_scope, monkeypatch):
+    state, _, _, loops, actions, _, _ = cryptex_cleanup_scope
+    late_loop = dict(loops["/dev/loop41"])
+    signal_process = _creation_cleanup._signal
+
+    def signal_and_attach(fd, value):
+        signal_process(fd, value)
+        if not state.alive:
+            loops[late_loop["path"]] = late_loop
+
+    monkeypatch.setattr(_creation_cleanup, "_signal", signal_and_attach)
+    with pytest.raises(RuntimeError, match="residual Cryptex loop attachments"):
+        state.run()
+    assert actions[-1] == ("signal", 4321, creator.signal.SIGTERM)
+    assert loops == {late_loop["path"]: late_loop}
+
+
+def test_loop_status_reads_kernel_backing_identity_and_accepts_unbound_device(monkeypatch):
+    import struct
+
+    data = struct.pack("=QQQQQIIII64s64s32sQQ", 123, 456, 0, 0, 0, 7, 0, 0, 1, b"image", b"", b"", 0, 0)
+
+    def status(fd, request, output):
+        assert fd == 42 and request == 0x4C05
+        output[:] = data
+
+    monkeypatch.setattr(fcntl, "ioctl", status)
+    result = _creation_cleanup._loop_status(42)
+    assert result["backing"] == (123, 456)
+    assert result["number"] == 7
+    assert result["flags"] == 1
+    assert result["record"] == data
+
+    def unbound(*_):
+        import errno
+
+        raise OSError(errno.ENXIO, "No such device or address")
+
+    monkeypatch.setattr(fcntl, "ioctl", unbound)
+    assert _creation_cleanup._loop_status(42) is None
+
+
+def test_scope_cleanup_uses_kernel_device_number_when_loop_partitions_are_configured(cryptex_cleanup_scope):
+    state, _, attached, loops, _, _, temporary = cryptex_cleanup_scope
+    device, inode, _ = loops["/dev/loop41"]["node"]
+    loops["/dev/loop41"]["node"] = (device, inode, os.makedev(7, 410))
+    attached[-1]["device"] = "7:410"
+    (temporary / "sys/dev/block/7:410/holders").mkdir(parents=True)
+    state.run()
+    assert loops == {}
+
+
+@pytest.mark.parametrize("inactive,mounted", [(False, False), (False, True), (True, False)])
+def test_scope_cleanup_refuses_cfw_loops_without_live_sshfs_provenance(
+    cryptex_cleanup_scope, inactive, mounted
+):
+    state, _, attached, loops, actions, properties, _ = cryptex_cleanup_scope
+    state.alive.pop(4321)
+    attached[:] = [mount for mount in attached if mounted and mount["type"] == "apfs"]
+    if inactive:
+        state.alive.clear()
+        properties.update(ActiveState="inactive", InvocationID="0" * 32, ControlGroup="")
+    with pytest.raises(RuntimeError, match="unproven CFW loop|ownership could not be proven"):
+        state.run()
+    assert actions == []
+    assert loops
+
+
+def test_scope_cleanup_refuses_late_unproven_cfw_loop_when_no_images_were_anchored(
+    cleanup_scope, monkeypatch
+):
+    unit, boot, identity, alive, invocation_id = cleanup_scope
+    identity.update(exe="/usr/bin/qemu-system-aarch64", argv=["qemu-system-aarch64"])
+    loops = []
+    monkeypatch.setattr(_creation_cleanup, "_loop_states", lambda: list(loops))
+
+    def terminate(*_):
+        alive.clear()
+        loops.append({"path": "/dev/loop42", "filename": "/var/tmp/vphone-cfw.aabbccdd/AppOS.dmg"})
+
+    monkeypatch.setattr(_creation_cleanup, "_signal", terminate)
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
+    )
+    with pytest.raises(RuntimeError, match="unproven CFW loop"):
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+    assert loops
+
+
+@pytest.mark.parametrize("major,minor,encoded", [(8, 0x12345, 0x12300845), (0xFFF, 0xFFFFF, 0xFFFFFFFF)])
+def test_loop_status_matches_stat_device_encoding_for_high_minors(monkeypatch, major, minor, encoded):
+    import struct
+
+    data = struct.pack("=QQQQQIIII64s64s32sQQ", encoded, 456, 0, 0, 0, 7, 0, 0, 1, b"image", b"", b"", 0, 0)
+
+    def status(_fd, _request, output):
+        output[:] = data
+
+    monkeypatch.setattr(fcntl, "ioctl", status)
+    assert _creation_cleanup._loop_status(42)["backing"] == (os.makedev(major, minor), 456)
+
+
+def test_loop_status_rejects_unsupported_device_encoding(monkeypatch):
+    import struct
+
+    data = struct.pack("=QQQQQIIII64s64s32sQQ", 1 << 32, 456, 0, 0, 0, 7, 0, 0, 1, b"image", b"", b"", 0, 0)
+
+    def status(_fd, _request, output):
+        output[:] = data
+
+    monkeypatch.setattr(fcntl, "ioctl", status)
+    with pytest.raises(RuntimeError, match="unsupported loop backing-device encoding"):
+        _creation_cleanup._loop_status(42)
