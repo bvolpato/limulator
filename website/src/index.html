@@ -48,12 +48,12 @@
           <p class="eyebrow"><span class="eyebrow-dot"></span>Local iOS research runtime</p>
           <h1 id="hero-title">Your Linux box.<br /><em>A native iOS guest.</em></h1>
           <p class="hero-lede">Build an iPhone app with xtool, install it into an emulated iOS device, and drive the native interface from your workstation.</p>
-          <p class="hero-note">CounterLab passes native iPhone 16 checks for taps, typing, navigation, and saved state. Clean device creation is still blocked by migration; iPad and Duo validation is pending.</p>
+          <p class="hero-note">CounterLab passes native iPhone 16 interaction checks. One closed-Duo trial recovered fixture playback after a long pause, and iPad display classification now matches its profile. Clean creation and complete device acceptance remain pending.</p>
           <div class="hero-actions">
             <a class="button button-dark" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#evidence">Check what is verified <span aria-hidden="true">↘</span></a>
           </div>
-          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>iPhone smoke passed · full acceptance pending</span></p>
+          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>iPhone smoke + one Duo video trial · full acceptance pending</span></p>
         </div>
 
         <div class="hero-visual" data-hero-visual aria-label="Conceptual diagram of the iPhone 16 portrait profile">
@@ -94,7 +94,7 @@
           <div class="signal-intro"><span class="signal-cross" aria-hidden="true">+</span><span>WHERE THE WORK STANDS</span></div>
           <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>iPhone 16 guest</span><strong data-status-value>iPhone app checks passed</strong><span class="signal-state" data-guest-os>iOS 27.0.1</span></div>
           <div class="signal-item" data-status="sample"><span class="signal-label">CounterLab</span><strong data-status-value>IPA built</strong><span class="signal-state">SDK 27.2</span></div>
-          <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>CounterLab smoke passed</strong><span class="signal-state">26 steps · one iPhone run</span></div>
+          <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>Selected native checks passed</strong><span class="signal-state">iPhone + closed-Duo trials</span></div>
         </div>
       </section>
 
@@ -136,10 +136,10 @@
             <p class="step-kicker">OBSERVE</p>
             <h3>Input &amp; capture</h3>
             <p>Tap, type, check app state and save genuine frames from the guest for repeatable review.</p>
-            <span class="step-state" data-workflow-step="capture">4 compatible CounterLab captures</span>
+            <span class="step-state" data-workflow-step="capture">6 iPhone and Duo captures</span>
           </article>
         </div>
-        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>CounterLab's warm Release build took 3.03 seconds with SDK 27.2. The compatible-graphics 12-step iPhone profile scenario and 26-step functional smoke passed. The smoke took 52.59 seconds, which is scenario time, not app performance. DataMigrator success: false still blocks clean creation.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
+        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone profile scenario and 26-step smoke passed. One closed-Duo BruTV trial recovered local fixture playback after a long pause. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
       </section>
 
       <section id="profiles" class="profile-section" aria-labelledby="profiles-title">
@@ -149,7 +149,7 @@
             <p class="eyebrow"><span class="section-index">02</span> Device profiles</p>
               <h2 id="profiles-title">Choose a device.<br /><em>Read its state.</em></h2>
             </div>
-            <p class="section-deck">Each profile records its model, OS, display geometry and scale. The status badge shows where firmware intake or native validation stands. Duo's schematic shows the visible cover framebuffer; its software inner display and postures await runtime and touch validation.</p>
+            <p class="section-deck">Each profile records its model, OS, display geometry and scale. Duo checks have exercised layout and selected controls across the cover and software inner display, but full posture and orientation behavior still needs review. The iPad's native display classification now matches its profile; app-level acceptance remains pending.</p>
           </div>
           <div class="profile-explorer">
             <div class="profile-picker">
@@ -182,7 +182,7 @@
                     <div><dt>Software postures</dt><dd data-profile-postures>Single display · iPhone profile checked</dd></div>
                     <div data-inner-display-row hidden><dt>Inner display</dt><dd data-profile-inner-display></dd></div>
                   </dl>
-                  <p class="profile-note" data-profile-note>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. The smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode input, Home, and count persistence after app relaunch. DataMigrator success: false still blocks clean creation. Repeatable cold guest startup, playback, app performance, Duo, and iPad behavior remain unverified.</p>
+                  <p class="profile-note" data-profile-note>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. The smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode input, Home, and count persistence after app relaunch. One closed-Duo trial recovered local fixture playback after a long pause. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete device acceptance remain pending.</p>
                 </div>
                 <div class="profile-graphic">
                   <div class="graphic-label"><span>DISPLAY MAP</span><span>CONCEPTUAL · NOT TO SCALE</span></div>
@@ -213,7 +213,7 @@
         <div class="evidence-board">
           <div class="evidence-board-head">
             <div><span class="evidence-overline">NATIVE CAPTURE ARCHIVE</span><h3>iOS guest frames</h3></div>
-            <span class="archive-count" data-capture-count>5 captures</span>
+            <span class="archive-count" data-capture-count>6 captures</span>
           </div>
           <div class="capture-grid" data-capture-grid>
             <div class="capture-empty">
@@ -222,7 +222,7 @@
                 <svg viewBox="0 0 64 64" fill="none"><rect x="11" y="13" width="42" height="38" rx="5"/><circle cx="32" cy="32" r="8"/><path d="m17 47 11-10 7 6 5-5 7 9"/></svg>
                 <span>ARCHIVE LOADING</span>
               </div>
-              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native evidence archive</span><h4>Loading the guest captures.</h4><p>CounterLab frames include a passed compatible-graphics smoke. The earlier BruTV frame remains diagnostic; each image carries its profile and validation context.</p></div>
+              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native evidence archive</span><h4>Loading the guest captures.</h4><p>CounterLab frames document a passed iPhone smoke, and a new closed-Duo capture records one fixture playback recovery trial. Each image carries its profile and validation limits.</p></div>
             </div>
           </div>
           <div class="evidence-board-foot"><span>Capture source: local iOS guest framebuffer</span><span data-capture-footnote>Native frame source and profile metadata are recorded.</span></div>
@@ -246,7 +246,7 @@
             <span class="proof-mark" aria-hidden="true"><span></span></span>
             <p class="proof-label" data-proof-label="runtime">FUNCTIONAL SMOKE PASSED</p>
             <h3>iPhone interaction checked</h3>
-            <p>The 26-step CounterLab smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count persistence after app relaunch. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified.</p>
+            <p>The 26-step CounterLab smoke verified native iPhone interactions. One closed-Duo BruTV session recovered local fixture playback after a 666.58-second pause; this is not a broad reliability or performance result. The iPad's display classification recovered in a preserved guest. Repeatable cold startup, clean creation, and complete device acceptance remain pending.</p>
             <span class="proof-state" data-proof-state="runtime">26 steps passed · acceptance pending</span>
           </article>
         </div>
@@ -353,11 +353,11 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>Is the native app workflow already proven?<span aria-hidden="true">+</span></summary>
-              <p data-faq-runtime>A compatible-graphics iPhone 16 run rebooted to API ready with CounterLab count 1 retained; a targeted semantic tap changed it to 2. The 12-step profile scenario passed its OS, idiom, point-size, and scale checks. The CounterLab smoke passed; DataMigrator success: false still blocks clean creation. Repeatable cold startup, playback, app performance, and Duo/iPad behavior remain unverified.</p>
+              <p data-faq-runtime>The 26-step compatible-graphics CounterLab smoke passed on one iPhone 16 guest. One closed-Duo BruTV session rendered its local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. That is one recovery case, not proof of broad playback reliability or app performance. The iPad's native display classification now matches its profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation; repeatable cold startup and full profile acceptance remain pending.</p>
             </details>
             <details>
               <summary>Can I use any iPhone, iPad, or App Store app?<span aria-hidden="true">+</span></summary>
-              <p>Compatibility is profile-specific. The Duo profile has one visible cover framebuffer, an experimental software inner iOS display and software fold postures; native layout and touch behavior remain unverified. The iPhone 16 profile scenario and CounterLab smoke passed, but DataMigrator success: false blocks clean creation. The iPad mini awaits native UIKit .pad checks. Locally built ARM64 apps are the intended input; encrypted App Store executables are rejected.</p>
+              <p>Compatibility is profile-specific. A closed-Duo session passed a narrow BruTV fixture playback and long-pause recovery trial; full posture, orientation, repeatable startup, and broad playback checks remain pending. The iPad's framebuffer density and ProgressUI screen class now match its profile in a preserved guest, but fresh creation, migration success, and a CounterLab .pad scenario remain unaccepted. Locally built ARM64 apps are the intended input; encrypted App Store executables are rejected.</p>
             </details>
             <details>
               <summary>Does a passing QEMU benchmark mean my app will run faster?<span aria-hidden="true">+</span></summary>
@@ -365,7 +365,7 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>What does the public preview include?<span aria-hidden="true">+</span></summary>
-              <p data-faq-release>The source repository is public as a research preview. Native app execution and device profiles are still being validated; public source availability does not establish runtime compatibility.</p>
+              <p data-faq-release>The public preview includes an iPhone CounterLab smoke, one closed-Duo fixture playback and recovery trial, and partial iPad display-classification recovery. These do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation.</p>
             </details>
           </div>
         </div>

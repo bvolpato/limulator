@@ -2,8 +2,8 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "iPhone smoke passed · clean creation pending",
-    "publicStatus": "Source is public as a research preview. The compatible-graphics iPhone 16 profile scenario and the 26-step CounterLab functional smoke passed. DataMigrator success: false still blocks clean creation acceptance; Duo and iPad behavior, playback, repeatable cold startup, and app performance remain unverified."
+    "detail": "iPhone smoke + one Duo video trial · full acceptance pending",
+    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a 666.58-second pause. iPad display classification also recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup, general app performance, and complete profile acceptance remain pending."
   },
   "guest": {
     "label": "iPhone 16 compatible run",
@@ -25,16 +25,16 @@
   "runtime": {
     "label": "Native runtime proof",
     "status": "acceptance-pending",
-    "value": "iPhone smoke passed · acceptance pending",
-    "proofLabel": "FUNCTIONAL SMOKE PASSED",
-    "workflowValue": "CounterLab smoke passed · 26 steps",
-    "captureValue": "4 compatible CounterLab captures",
-    "detail": "The compatible-graphics CounterLab smoke passed all 26 steps in one iPhone 16 run. It verified reset and increment, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count 1 after app terminate/relaunch. The 52.59-second duration is scenario time, not an app performance measurement. A separate 12-step iPhone profile scenario passed its OS, idiom, point-size, and scale checks. DataMigrator success: false still blocks clean creation acceptance. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified.",
-    "faq": "A 26-step CounterLab smoke passed in compatible graphics on one iPhone 16 run. It verified reset and increment, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count 1 after app terminate/relaunch. The 52.59-second scenario duration is not an app performance measurement. The 12-step iPhone profile scenario also passed its OS, idiom, point-size, and scale checks. DataMigrator success: false still blocks clean creation. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified."
+    "value": "Selected native checks passed",
+    "proofLabel": "NATIVE APP CHECKS PASSED",
+    "workflowValue": "iPhone smoke + Duo video trial",
+    "captureValue": "6 iPhone and Duo captures",
+    "detail": "The 26-step compatible-graphics CounterLab smoke passed in one iPhone 16 run. A separate closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. This is one recovery trial, not a general playback or app-performance result. iPad framebuffer density and ProgressUI screen classification now match the profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation. Repeatable cold startup and complete iPhone, Duo, and iPad acceptance remain pending.",
+    "faq": "The 26-step CounterLab smoke passed on one compatible-graphics iPhone 16 guest. One closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, with source counters advancing in later captures. This does not establish broad playback reliability or app performance. The iPad's native framebuffer density and ProgressUI screen classification now match its profile after cache refresh and reboot. Fresh creation, migration, repeatable cold startup, and complete profile acceptance remain pending."
   },
-  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2. The compatible-graphics iPhone 16 profile scenario and the 26-step CounterLab functional smoke passed. The smoke verified native interactions, Unicode input, navigation, and count 1 after app terminate/relaunch; its 52.59-second duration is scenario time, not an app performance measurement. DataMigrator success: false and the unchanged host creation receipt block clean creation; repeatable cold guest startup, playback, app performance, and Duo/iPad checks remain unverified.",
+  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo BruTV session recovered local fixture playback 3.28 seconds after a 666.58-second pause. The iPad's display classification now matches its profile in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete profile acceptance remain pending.",
   "faq": {
-    "release": "The public preview includes a passed compatible-graphics iPhone 16 profile scenario and a passed 26-step CounterLab smoke, plus a separate diagnostic BruTV frame. DataMigrator success: false still blocks clean creation acceptance. Duo and iPad behavior, playback, repeatable cold guest startup, and app performance remain unverified."
+    "release": "The public preview includes a passed iPhone 16 profile scenario and CounterLab smoke, one closed-Duo BruTV fixture playback and recovery trial, and partial iPad display-classification recovery. These checks do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation."
   },
   "nativeObservation": {
     "compatibleRun": {
@@ -203,6 +203,19 @@
       "posture": "Portrait · 1179 × 2556 px",
       "sha256": "b14cef9ee3032342c6d3fc3cc2b16ad436bc027b692a9aed5acd5b11a2aaf3a3",
       "provenance": "iphone16-brutv-ui-20261107/observation.png; public QMPClient.screendump format=png; launch frontmost_verified=true, PID 513",
+      "accepted": false
+    },
+    {
+      "file": "assets/native/brutv-duo-live-fixture-2026-11-08.png",
+      "title": "BruTV · fixture playback on iPhone Duo",
+      "alt": "BruTV's two-row header and playback controls appear above the local color-bar test video on the closed iPhone Duo display.",
+      "context": "This unedited native frame shows BruTV rendering the local H.264 HLS fixture in one closed-Duo session. After a 666.58-second pause, physical Play restored playback in 3.28 seconds, and source counters advanced in later captures. This demonstrates one recovery case, not general playback reliability or app performance.",
+      "device": "iPhone Duo · iPhone19,4",
+      "os": "iOS 27.1 · build 24A94425",
+      "posture": "Closed · 466 × 678 pt @ 3× · 1398 × 2034 px",
+      "sha256": "643429c25958bc2467cc2162aa726e73d3434f59c70b3497d58714f26e1632b9",
+      "provenance": "Direct native QEMU PNG capture before the pause/recovery check in a closed-Duo local fixture session, 8 Nov 2026; BruTV commit d62c6b1; image bytes are unedited.",
+      "graphicsMode": "compatible",
       "accepted": false
     }
   ],

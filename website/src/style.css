@@ -102,7 +102,7 @@ h1 em, h2 em { color: #758562; font-family: var(--serif); font-weight: 400; lett
 .signal-inner { display: grid; min-height: 104px; grid-template-columns: 1.2fr repeat(3, 1fr); align-items: center; }
 .signal-intro { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11px; font-weight: 740; letter-spacing: .09em; }
 .signal-cross { color: #83936b; font-family: var(--serif); font-size: 22px; font-weight: 400; }
-.signal-item { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; align-content: center; min-height: 53px; padding-left: 22px; border-left: 1px solid var(--line); }
+.signal-item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px 10px; align-content: center; min-height: 53px; padding-left: 22px; border-left: 1px solid var(--line); }
 .signal-label { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 730; letter-spacing: .07em; text-transform: uppercase; }
 .signal-item strong { font-size: 14px; font-weight: 700; letter-spacing: -.02em; }
 .signal-state { align-self: center; color: var(--muted); font-family: var(--mono); font-size: 12px; }

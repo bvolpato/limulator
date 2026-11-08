@@ -23,7 +23,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-VM disks, firmware, SDKs, apps, and private keys are local data and are excluded from Git. The website includes four reviewed CounterLab captures from compatible-graphics iPhone 16 runs and one older diagnostic BruTV frame; each image records the specific observation it supports. These captures do not establish complete native acceptance. Limulator does not redistribute Apple firmware. Locally built ARM64 iPhone apps are the primary input; support for arbitrary App Store binaries is not claimed.
+VM disks, firmware, SDKs, apps, and private keys are local data and are excluded from Git. The website includes four reviewed CounterLab captures from compatible-graphics iPhone 16 runs, an older diagnostic BruTV frame, and one closed-Duo capture of a local fixture playback recovery trial; each image records the specific observation it supports. These captures do not establish complete native acceptance. Limulator does not redistribute Apple firmware. Locally built ARM64 iPhone apps are the primary input; support for arbitrary App Store binaries is not claimed.
 
 ## Credits
 

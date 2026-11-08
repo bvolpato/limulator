@@ -3,9 +3,9 @@
     {
       "id": "duo",
       "label": "iPhone Duo",
-      "badge": "Startup repair required",
+      "badge": "Closed Duo video trial · acceptance pending",
       "state": "active",
-      "validation": "Restore and research guest installation are complete. Guest startup needs repair before native app validation can continue.",
+      "validation": "One closed-display Duo session rendered BruTV's local H.264 HLS fixture. After a 666.58-second pause, physical Play restored video in 3.28 seconds, and source counters advanced in later captures. Full posture and orientation behavior, repeatable cold startup, general app performance, and complete profile acceptance remain pending.",
       "diagram": "cover",
       "form": "Cover framebuffer · experimental inner display",
       "device": "iPhone Duo",
@@ -16,8 +16,8 @@
       "scale": "3× native scale",
       "dimensions": "1398 × 2034 px",
       "innerDisplay": "2007 × 2853 px @ 3×",
-      "postures": "Closed · book · open (software)",
-      "note": "Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer, with software postures. Guest startup needs repair before native layout, touch, or posture behavior can be checked. The physical hinge and second physical scanout are outside this emulation.",
+      "postures": "Closed · book · open · partial native checks",
+      "note": "One closed-display BruTV session rendered the local H.264 HLS fixture. After a 666.58-second pause, physical Play restored playback in 3.28 seconds; source counters advanced in later captures. Earlier native checks exercised layout and selected controls across cover and software inner displays. These are narrow trials, not broad playback or performance results. Full posture and orientation behavior, repeatable cold startup, and complete profile acceptance remain pending. The virtual inner display is composited onto one visible cover framebuffer; physical hinge behavior and a second physical scanout are not emulated.",
       "source": "Active guest configuration"
     },
     {
@@ -36,15 +36,15 @@
       "scale": "3× native scale",
       "dimensions": "1179 × 2556 px",
       "postures": "Single display · iPhone profile checked",
-      "note": "A fresh iPhone 16 guest on iOS 27.0.1, build 24A446, completed ordinary Setup Assistant through the UI. In compatible graphics, the 12-step iPhone profile scenario and 26-step CounterLab smoke passed. The smoke covered counter actions, semantic scrolling and taps, Details navigation, Unicode input (Hello from Linux ✓), Home, and count 1 after app terminate/relaunch. The note is transient; its persistence was not tested. DataMigrator success: false leaves clean creation unaccepted. Repeatable cold guest startup, playback, app performance, Duo, and iPad behavior remain unverified.",
+      "note": "A fresh iPhone 16 guest on iOS 27.0.1, build 24A446, completed ordinary Setup Assistant through the UI. In compatible graphics, the 12-step iPhone profile scenario and 26-step CounterLab smoke passed. The smoke covered counter actions, semantic scrolling and taps, Details navigation, Unicode input (Hello from Linux ✓), Home, and count 1 after app terminate/relaunch. The note is transient; its persistence was not tested. DataMigrator success: false leaves clean creation unaccepted. One closed-Duo video recovery trial and iPad display-classification recovery have also been demonstrated, but repeatable cold guest startup, app performance, and complete device acceptance remain pending.",
       "source": "Compatible iPhone app smoke · acceptance pending"
     },
     {
       "id": "ipad",
       "label": "iPad mini (A17 Pro)",
-      "badge": "Experimental",
+      "badge": "Display classification recovered · app checks pending",
       "state": "research",
-      "validation": "Experimental. Native UIKit .pad behavior has not been verified.",
+      "validation": "Native framebuffer density now matches the profile at 326 PPI, and ProgressUI reports supported screen class 28 after cache refresh and reboot. Fresh creation, migration success, and the native CounterLab iPad scenario remain unaccepted.",
       "diagram": "ipad",
       "form": "Tablet display · experimental profile",
       "device": "iPad mini (A17 Pro)",
@@ -54,8 +54,8 @@
       "deviceName": "ipad-mini",
       "scale": "2× native scale",
       "dimensions": "1488 × 2266 px",
-      "postures": "UIKit .pad idiom · proof pending",
-      "note": "Firmware has passed its size and SHA-256 checks. This profile remains experimental until a native app confirms UIKit .pad behavior and layout.",
+      "postures": "Display class recovered · UIKit .pad app checks pending",
+      "note": "The native framebuffer now reports the profile's 326 PPI density, and ProgressUI reports supported screen class 28 after a clean reboot. This recovers display classification in the preserved research guest. Fresh creation, migration success, and a native CounterLab .pad scenario remain to be verified.",
       "source": "Experimental catalog profile"
     }
   ]

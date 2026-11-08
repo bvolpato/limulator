@@ -40,7 +40,7 @@ function configureProfileTabs(profiles) {
     const diagram = $("[data-profile-diagram]");
     const diagrams = {
       cover: {
-        aria: `Conceptual ${label} cover framebuffer. Its virtual inner display and software postures are experimental; runtime behavior remains unverified.`,
+        aria: `Conceptual ${label} cover framebuffer. Native checks include selected controls and one closed-display video recovery trial. The virtual inner display and software postures remain experimental; full posture and orientation behavior are still pending.`,
         shapes: '<rect x="113" y="10" width="134" height="196" rx="21"/>',
         caption: "one visible framebuffer · cover profile",
         center: "COVER",
