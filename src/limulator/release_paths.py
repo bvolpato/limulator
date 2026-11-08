@@ -34,4 +34,4 @@ def release_root(data_home: Path, release_base: Path | str | None = None) -> Pat
     """Return a version and content-addressed directory under the configured release base."""
     version, sha256 = release_pin()
     base = Path(release_base).expanduser() if release_base is not None else data_home / "releases/vphone"
-    return base / f"{version}-{sha256}"
+    return base.resolve() / f"{version}-{sha256}"

@@ -20,6 +20,11 @@ export SWIFTLY_HOME_DIR=$LIMULATOR_HOME/swiftly
 export SWIFTLY_TOOLCHAINS_DIR=$SWIFTLY_HOME_DIR/toolchains
 export VSETUP_SRC=${VSETUP_SRC:-$LIMULATOR_BACKEND}
 release_base=${LIMULATOR_RELEASE_BASE:-${VSETUP_RELEASE:-$LIMULATOR_HOME/releases/vphone}}
+case $release_base in
+  \~) release_base=$HOME ;;
+  \~/*) release_base=$HOME/${release_base:2} ;;
+esac
+release_base=$(realpath -m -- "$release_base")
 export LIMULATOR_RELEASE_BASE="$release_base"
 release_tools=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 release_lock=$release_tools/../third_party.lock.json

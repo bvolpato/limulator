@@ -90,8 +90,7 @@ def _native_env(paths: Paths) -> dict[str, str]:
     xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
     release_base = env.get("LIMULATOR_RELEASE_BASE") or env.get("VSETUP_RELEASE")
     release_directory = release_root(paths.data, release_base)
-    if release_base is None:
-        release_base = str(paths.data / "releases/vphone")
+    release_base = str(release_directory.parent)
     env.setdefault("DARWIN_SDK_BUNDLE", str(xtool_config / "swiftpm/swift-sdks/darwin.artifactbundle"))
     env["PATH"] = os.pathsep.join(
         (str(paths.prefix / "bin"), str(Path.home() / ".cargo/bin"), env.get("PATH", os.defpath))

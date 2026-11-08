@@ -141,12 +141,18 @@ def test_doctor_preserves_custom_release_base_while_selecting_locked_root(tmp_pa
     assert result["tools"]["firmware_release"] == (release_base / f"{pin['version']}-{pin['sha256']}")
 
 
-def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, monkeypatch):
+@pytest.mark.parametrize("configured_base", ["relative release base", "~/tilde release base"])
+def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, monkeypatch, configured_base):
     paths = Paths(tmp_path / "data")
-    release_base = tmp_path / "custom release base"
+    bootstrap_cwd = tmp_path / "bootstrap cwd"
+    creator_cwd = tmp_path / "creator cwd"
+    home = tmp_path / "home"
+    bootstrap_cwd.mkdir()
+    creator_cwd.mkdir()
     env = os.environ.copy()
     env.pop("LIMULATOR_RELEASE_BASE", None)
-    env["VSETUP_RELEASE"] = str(release_base)
+    env["HOME"] = str(home)
+    env["VSETUP_RELEASE"] = configured_base
     env["LIMULATOR_HOME"] = str(paths.data)
     selected = subprocess.run(
         [
@@ -157,6 +163,7 @@ def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, mo
             str(Path(ROOT) / "tools/backend_env.sh"),
         ],
         env=env,
+        cwd=bootstrap_cwd,
         capture_output=True,
         text=True,
         timeout=10,
@@ -164,18 +171,32 @@ def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, mo
     assert selected.returncode == 0, selected.stderr
     shell_base, shell_root = selected.stdout.splitlines()
     pin = json.loads((Path(ROOT) / "third_party.lock.json").read_text())["release"]
+    release_base = (
+        home / configured_base[2:] if configured_base.startswith("~/") else bootstrap_cwd / configured_base
+    )
     expected_root = release_base / f"{pin['version']}-{pin['sha256']}"
-    assert Path(shell_base) == release_base
-    assert Path(shell_root) == expected_root
+    assert Path(shell_base) == release_base.resolve()
+    assert Path(shell_root) == expected_root.resolve()
 
-    monkeypatch.setenv("LIMULATOR_RELEASE_BASE", shell_base)
+    monkeypatch.chdir(creator_cwd)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LIMULATOR_RELEASE_BASE", configured_base)
     monkeypatch.setenv("VSETUP_RELEASE", shell_root)
     monkeypatch.setenv("LIMULATOR_BACKEND", str(paths.backend))
     monkeypatch.setenv("LIMULATOR_PREFIX", str(paths.prefix))
+    python_environment = creator._native_env(paths)
+    python_base = (
+        home / configured_base[2:] if configured_base.startswith("~/") else creator_cwd / configured_base
+    )
+    python_root = python_base.resolve() / f"{pin['version']}-{pin['sha256']}"
+    assert Path(python_environment["LIMULATOR_RELEASE_BASE"]) == python_base.resolve()
+    assert Path(python_environment["VSETUP_RELEASE"]) == python_root
+
+    monkeypatch.setenv("LIMULATOR_RELEASE_BASE", shell_base)
     _stub_doctor_host_probes(monkeypatch)
     result = cli.doctor(paths)
 
-    assert result["tools"]["firmware_release"] == expected_root
+    assert result["tools"]["firmware_release"] == expected_root.resolve()
 
 
 def test_doctor_runs_the_actual_release_product(tmp_path, monkeypatch):
