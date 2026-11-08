@@ -179,11 +179,19 @@ build_apfs() {
 }
 build_release() {
   verify_sources
-  local version
+  local version sha256 release_root
   version=$(jq -er .release.version "$lock")
-  mkdir -p "$VSETUP_RELEASE"
-  download "$(jq -er .release.url "$lock")" "$VSETUP_RELEASE/VPhone-$version.zip" "$(jq -er .release.sha256 "$lock")"
-  "$LIMULATOR_BACKEND/setup/setup.sh" release
+  sha256=$(jq -er .release.sha256 "$lock" | tr '[:upper:]' '[:lower:]')
+  [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "Invalid release version in $lock" >&2; return 1; }
+  [[ $sha256 =~ ^[[:xdigit:]]{64}$ ]] || { echo "Invalid release SHA-256 in $lock" >&2; return 1; }
+  release_root=$LIMULATOR_RELEASE_BASE/$version-$sha256
+  [[ $VSETUP_RELEASE == "$release_root" ]] || {
+    echo "Selected release path does not match the locked release: $VSETUP_RELEASE" >&2
+    return 1
+  }
+  mkdir -p "$release_root"
+  download "$(jq -er .release.url "$lock")" "$release_root/VPhone-$version.zip" "$sha256"
+  VPHONE_CLI_PUBLIC="$version" "$LIMULATOR_BACKEND/setup/setup.sh" release
 }
 case $phase in
   all) for step in sources apple_usb tools crypto swift signing gpu qemu cli usbmuxd apfs release; do "build_$step"; done ;;

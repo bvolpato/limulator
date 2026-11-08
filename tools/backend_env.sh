@@ -19,7 +19,20 @@ export MAKEFLAGS="-j$LIMULATOR_JOBS"
 export SWIFTLY_HOME_DIR=$LIMULATOR_HOME/swiftly
 export SWIFTLY_TOOLCHAINS_DIR=$SWIFTLY_HOME_DIR/toolchains
 export VSETUP_SRC=${VSETUP_SRC:-$LIMULATOR_BACKEND}
-export VSETUP_RELEASE=${VSETUP_RELEASE:-$LIMULATOR_HOME/releases/vphone}
+release_base=${LIMULATOR_RELEASE_BASE:-${VSETUP_RELEASE:-$LIMULATOR_HOME/releases/vphone}}
+export LIMULATOR_RELEASE_BASE="$release_base"
+release_tools=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+release_lock=$release_tools/../third_party.lock.json
+export VSETUP_RELEASE="$release_base"
+if command -v jq >/dev/null && [[ -f $release_lock ]]; then
+  if release_version=$(jq -er .release.version "$release_lock" 2>/dev/null) &&
+     release_sha256=$(jq -er .release.sha256 "$release_lock" 2>/dev/null); then
+    release_sha256=${release_sha256,,}
+    if [[ $release_version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $release_sha256 =~ ^[[:xdigit:]]{64}$ ]]; then
+      export VSETUP_RELEASE="$release_base/$release_version-$release_sha256"
+    fi
+  fi
+fi
 export VSETUP_DEVICES=${VSETUP_DEVICES:-$LIMULATOR_HOME/vms}
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   export -p | LC_ALL=C sort | grep -E ' (LIMULATOR_|PREFIX=|PATH=|PKG_CONFIG=|PKG_CONFIG_PATH=|LD_LIBRARY_PATH=|CPPFLAGS=|LDFLAGS=|CMAKE_PREFIX_PATH=|CARGO_BUILD_JOBS=|CMAKE_BUILD_PARALLEL_LEVEL=|MAKEFLAGS=|SWIFTLY_|VSETUP_)'

@@ -55,10 +55,19 @@ def doctor(paths: Paths) -> dict:
     tools = {
         "qemu": paths.backend / "qemu/build/qemu-system-aarch64",
         "firmware_cli": Path(environment["VC"]),
+        "firmware_release": Path(environment["VSETUP_RELEASE"]),
         "usbmuxd": paths.backend / ".build/usbmuxd-32k/usbmuxd",
         "apfs": paths.backend / ".build/linux-apfs-rw/apfs.ko",
     }
-    checks = {name: path.exists() for name, path in tools.items()}
+    checks = {name: path.exists() for name, path in tools.items() if name != "firmware_release"}
+    resources = tools["firmware_release"] / "app/VPhone.bundle/Contents/Resources"
+    checks["firmware_release"] = all(
+        any(
+            path.is_file() and path.stat().st_size > 0
+            for path in (resources / name / f"{name}.bin", resources / f"{name}.bin")
+        )
+        for name in ("OpenAVB", "OpenSEP")
+    )
     qemu_data_dirs = []
     try:
         qemu_data = subprocess.run(

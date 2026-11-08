@@ -1,6 +1,8 @@
+import json
 import os
 import platform
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -51,6 +53,8 @@ def _doctor_paths(tmp_path, monkeypatch):
     prefix = tmp_path / "tools"
     monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
     monkeypatch.setenv("LIMULATOR_PREFIX", str(prefix))
+    monkeypatch.delenv("LIMULATOR_RELEASE_BASE", raising=False)
+    monkeypatch.delenv("VSETUP_RELEASE", raising=False)
     paths = Paths(tmp_path / "data")
     wrapper = backend / "linux-create/vphone-cli"
     wrapper_marker = tmp_path / "wrapper-ran"
@@ -59,6 +63,13 @@ def _doctor_paths(tmp_path, monkeypatch):
         f"#!/bin/sh\nprintf stale-wrapper > '{wrapper_marker}'\nprintf 'vphone stale wrapper\\n'\n",
     )
     release = backend / f"linux-create/.build/out/out/Products/Release-linux-{platform.machine()}/vphone-cli"
+    release_resources = (
+        Path(creator._native_env(paths)["VSETUP_RELEASE"]) / "app/VPhone.bundle/Contents/Resources"
+    )
+    for name in ("OpenAVB", "OpenSEP"):
+        rom = release_resources / name / f"{name}.bin"
+        rom.parent.mkdir(parents=True, exist_ok=True)
+        rom.write_bytes(b"fixture ROM")
     return paths, wrapper_marker, release
 
 
@@ -105,9 +116,66 @@ def test_doctor_reports_missing_release_product_without_running_stale_wrapper(tm
     result = cli.doctor(paths)
 
     assert result["tools"]["firmware_cli"] == release
+    lock = json.loads((Path(ROOT) / "third_party.lock.json").read_text())
+    pin = lock["release"]
+    assert result["tools"]["firmware_release"] == (
+        paths.data / "releases/vphone" / f"{pin['version']}-{pin['sha256']}"
+    )
+    assert result["checks"]["firmware_release"] is True
     assert result["checks"]["firmware_cli"] is False
     assert result["checks"]["firmware_cli_runs"] is False
     assert not wrapper_marker.exists()
+
+
+def test_doctor_preserves_custom_release_base_while_selecting_locked_root(tmp_path, monkeypatch):
+    paths, _wrapper_marker, _release = _doctor_paths(tmp_path, monkeypatch)
+    release_base = tmp_path / "custom release base"
+    monkeypatch.setenv("VSETUP_RELEASE", str(release_base))
+    monkeypatch.delenv("LIMULATOR_RELEASE_BASE", raising=False)
+    _stub_doctor_host_probes(monkeypatch)
+
+    result = cli.doctor(paths)
+
+    lock = json.loads((Path(ROOT) / "third_party.lock.json").read_text())
+    pin = lock["release"]
+    assert result["tools"]["firmware_release"] == (release_base / f"{pin['version']}-{pin['sha256']}")
+
+
+def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, monkeypatch):
+    paths = Paths(tmp_path / "data")
+    release_base = tmp_path / "custom release base"
+    env = os.environ.copy()
+    env.pop("LIMULATOR_RELEASE_BASE", None)
+    env["VSETUP_RELEASE"] = str(release_base)
+    env["LIMULATOR_HOME"] = str(paths.data)
+    selected = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; printf "%s\\n%s\\n" "$LIMULATOR_RELEASE_BASE" "$VSETUP_RELEASE"',
+            "bash",
+            str(Path(ROOT) / "tools/backend_env.sh"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert selected.returncode == 0, selected.stderr
+    shell_base, shell_root = selected.stdout.splitlines()
+    pin = json.loads((Path(ROOT) / "third_party.lock.json").read_text())["release"]
+    expected_root = release_base / f"{pin['version']}-{pin['sha256']}"
+    assert Path(shell_base) == release_base
+    assert Path(shell_root) == expected_root
+
+    monkeypatch.setenv("LIMULATOR_RELEASE_BASE", shell_base)
+    monkeypatch.setenv("VSETUP_RELEASE", shell_root)
+    monkeypatch.setenv("LIMULATOR_BACKEND", str(paths.backend))
+    monkeypatch.setenv("LIMULATOR_PREFIX", str(paths.prefix))
+    _stub_doctor_host_probes(monkeypatch)
+    result = cli.doctor(paths)
+
+    assert result["tools"]["firmware_release"] == expected_root
 
 
 def test_doctor_runs_the_actual_release_product(tmp_path, monkeypatch):
@@ -192,10 +260,14 @@ def test_backend_cli_bootstrap_requests_release_configuration(tmp_path):
         'printf "%s\\n" "$VPHONE_CLI" > "$LIMULATOR_TEST_BUILD_SOURCE"\n',
     )
     bin_dir = prefix / "bin"
+    release_pin = json.loads((Path(ROOT) / "third_party.lock.json").read_text())["release"]
+    release_version, release_sha256 = release_pin["version"], release_pin["sha256"]
     _executable(
         bin_dir / "jq",
         "#!/usr/bin/env bash\n"
         'case "${2:-}" in\n'
+        f'  .release.version) printf "{release_version}\\n" ;;\n'
+        f'  .release.sha256) printf "{release_sha256}\\n" ;;\n'
         '  .vphone_cli.version) printf "2.14.2\\n" ;;\n'
         '  .vphone_cli.repository) printf "https://example.invalid/vphone-cli.git\\n" ;;\n'
         '  .vphone_cli.revision) printf "83197152137ddd2aad70eb121d6b88a9afbee36e\\n" ;;\n'

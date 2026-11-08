@@ -51,6 +51,7 @@ from .lifecycle import (
 )
 from .profiles import DeviceProfile, FirmwareDescriptor, profile_for
 from .protocols import GuestClient, ProtocolError
+from .release_paths import release_root
 
 _STAGES = ("sanity", "bundle", "firmware", "gpu-driver", "prepare", "patch", "restore", "cfw", "booted")
 _HOST_CREATION_LOCK = Path("/run/lock/limulator-create.lock")
@@ -87,6 +88,10 @@ def _firmware_cache(env: dict[str, str]) -> Path:
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
     xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
+    release_base = env.get("LIMULATOR_RELEASE_BASE") or env.get("VSETUP_RELEASE")
+    release_directory = release_root(paths.data, release_base)
+    if release_base is None:
+        release_base = str(paths.data / "releases/vphone")
     env.setdefault("DARWIN_SDK_BUNDLE", str(xtool_config / "swiftpm/swift-sdks/darwin.artifactbundle"))
     env["PATH"] = os.pathsep.join(
         (str(paths.prefix / "bin"), str(Path.home() / ".cargo/bin"), env.get("PATH", os.defpath))
@@ -97,9 +102,10 @@ def _native_env(paths: Paths) -> dict[str, str]:
     )
     env.update(
         LIMULATOR_HOME=str(paths.data),
+        LIMULATOR_RELEASE_BASE=str(release_base),
         VSETUP_SRC=str(paths.backend),
         VSETUP_DEVICES=str(paths.vms),
-        VSETUP_RELEASE=str(paths.data / "releases/vphone"),
+        VSETUP_RELEASE=str(release_directory),
         VSETUP_CACHE=str(_firmware_cache(env)),
         VPHONE_RCODESIGN=str(paths.prefix / "bin/rcodesign"),
         VPHONE_APFS_KO=str(paths.backend / ".build/linux-apfs-rw/apfs.ko"),
