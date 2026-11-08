@@ -32,9 +32,11 @@ Numbers below identify the [former patch series](https://github.com/bvolpato/lim
 | `0020`, `0021` | Optional USB, VirtIO and MSI-X diagnostics | [qemu-vphone #2](https://github.com/YahiaAngelo/qemu-vphone/pull/2) |
 | `0022`, `0023` | Per-run native window socket and guest controls | [vphone-linux #29](https://github.com/YahiaAngelo/vphone-linux/pull/29) |
 
-These are proposals, not merged dependencies. The QEMU PR uses generic VirtIO and PCI trace names; the pinned `dev` source retains the VUSB-specific names of its validated build. Do not use one version's event allowlist with the other without checking `-trace help`.
+As of 8 November 2026 UTC, CLI [#853](https://github.com/Lakr233/vphone-cli/pull/853), [#854](https://github.com/Lakr233/vphone-cli/pull/854), and [#856](https://github.com/Lakr233/vphone-cli/pull/856) have merged upstream. The remaining contributions above are open proposals. The lock still selects the tested integration revisions; an upstream merge alone does not validate a newer CLI or its guest resources.
 
-A later native CFW installation exposed a separate subprocess capture hang: the child had exited, but Linux Foundation omitted an EOF readability callback. [vphone-cli #856](https://github.com/Lakr233/vphone-cli/pull/856) replaces callback-based collection with concurrent pipe readers. The standalone regression reproduces the old hang and checks complete output and exit status with the replacement. This fix is separate from the former patch migration.
+The QEMU PR uses generic VirtIO and PCI trace names; the pinned `dev` source retains the VUSB-specific names of its validated build. Do not use one version's event allowlist with the other without checking `-trace help`.
+
+A later native CFW installation exposed a separate subprocess capture hang: the child had exited, but Linux Foundation omitted an EOF readability callback. The merged [vphone-cli #856](https://github.com/Lakr233/vphone-cli/pull/856) replaces callback-based collection with concurrent pipe readers. The standalone regression reproduces the old hang and checks complete output and exit status with the replacement. This fix is separate from the former patch migration.
 
 [vphone-linux #40](https://github.com/YahiaAngelo/vphone-linux/pull/40) corrects the catalog names for `iPhone17,3` and `iPad16,1` to “iPhone 16” and “iPad mini (A17 Pro),” and fixes the matching iPhone README examples. Catalog validation, the device list, and setup dry runs verify the displayed names.
 
