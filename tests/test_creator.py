@@ -1034,7 +1034,7 @@ def test_creation_scope_invocation_capture_refuses_unexpected_control_group(monk
         creator._capture_creation_scope_invocation(4321, unit, {})
 
 
-@pytest.mark.parametrize("failure", ["scope", "private USB", None])
+@pytest.mark.parametrize("failure", ["scope", "private USB", "device info", None])
 def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(catalog, monkeypatch, failure):
     candidate, _ = _unregistered_booted_vm(catalog)
     vm = candidate.vm_path
@@ -1075,6 +1075,11 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
     monkeypatch.setattr(creator, "GuestClient", Guest)
     monkeypatch.setattr(creator, "_verify_guest_migration", lambda *_: _migration_settings())
     monkeypatch.setattr(creator, "_verified_guest_info", lambda *_: {"ios_version": candidate.os_version})
+    if failure == "device info":
+        def failed_info(*_args):
+            raise creator.ProtocolError("timed out while reading HTTP response headers")
+
+        monkeypatch.setattr(creator, "_verified_guest_info", failed_info)
     monkeypatch.setattr(creator, "_stop_creation_guest", lambda *_: None)
     runtime_guest_calls = []
     runtime_start_modes = []
@@ -1157,14 +1162,25 @@ def test_verified_guest_is_not_registered_until_all_creation_cleanup_succeeds(ca
         ]
         return
 
-    message = "owned scope cleanup failed" if failure == "scope" else "private USB helper remains active"
+    message = {
+        "scope": "owned scope cleanup failed",
+        "private USB": "private USB helper remains active",
+        "device info": "timed out while reading HTTP response headers",
+    }[failure]
     with pytest.raises(RuntimeError, match=message):
         creator._pipeline(catalog, candidate, get_profile("iphone-duo"), {}, {})
 
     assert Registry(catalog).list() == []
     receipt = creator._read_json(vm / ".limulator-create.json")
     assert receipt["state"] == "error"
-    assert message in receipt["cleanup_error"]
+    if failure == "device info":
+        assert receipt["stage"] == "verification-device-info"
+        assert receipt["unlock"] == {"locked": False}
+        assert receipt["migration_result"] == _migration_settings()
+        assert message in receipt["error"]
+        assert "cleanup_error" not in receipt
+    else:
+        assert message in receipt["cleanup_error"]
     assert closed == [True]
 
 

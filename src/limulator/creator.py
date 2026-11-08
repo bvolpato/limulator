@@ -1570,7 +1570,11 @@ def _pipeline(
         if "booted" not in _completed(vm):
             raise RuntimeError("upstream returned without a completed first boot")
         guest = GuestClient(cid=candidate.cid, timeout=30)
+        state.update(stage="verification-setup")
+        _atomic_json(state_path, state)
         setup = guest.rpc("setup.status", {})
+        state.update(stage="verification-migration", setup=setup)
+        _atomic_json(state_path, state)
         migration_result = _verify_guest_migration(
             guest,
             setup,
@@ -1578,10 +1582,14 @@ def _pipeline(
             state,
             expected_migration_build,
         )
+        state.update(stage="verification-unlock", migration_result=migration_result)
+        _atomic_json(state_path, state)
         unlock = GuestClient(cid=candidate.cid, timeout=120).rpc("screen.unlock", {"timeout": 60})
-        info = _verified_guest_info(guest, candidate.os_version)
         if not isinstance(unlock, dict) or unlock.get("locked") is not False:
             raise RuntimeError("guest did not confirm an unlocked screen")
+        state.update(stage="verification-device-info", unlock=unlock)
+        _atomic_json(state_path, state)
+        info = _verified_guest_info(guest, candidate.os_version)
         state.update(
             completed=_completed(vm),
             setup=setup,
