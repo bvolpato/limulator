@@ -413,7 +413,7 @@ server.close()
             scope_args = scope_capture.read_text().splitlines()
             assert "MemoryHigh=32G" in scope_args
             assert "MemoryMax=40G" in scope_args
-            assert ("MemorySwapMax=0" if window else "MemorySwapMax=4G") in scope_args
+            assert "MemorySwapMax=0" in scope_args
             assert lifecycle._identity_alive(runtime._metadata()["supervisor"])
             with pytest.raises(RuntimeError, match="already owned"):
                 lifecycle._lock_disk(isolated.vm_path / "Disk.img")

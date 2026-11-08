@@ -589,7 +589,7 @@ def _supervise(args: argparse.Namespace) -> int:
         "-p",
         "MemoryMax=40G",
         "-p",
-        "MemorySwapMax=0" if args.window else "MemorySwapMax=4G",
+        "MemorySwapMax=0",
         "--",
         os.fspath(paths.backend / "run-vphone.sh"),
         os.fspath(device.vm_path),
