@@ -26,6 +26,8 @@ The default data directory is `~/.local/share/limulator`. `LIMULATOR_HOME` or th
 
 Firmware downloads and verification use the native `VSETUP_CACHE` directory. An unset or empty value selects `~/.cache/vphone`. Limulator expands `~` and resolves relative paths against the invocation directory before passing the absolute path to native tools. To select a private HDD or another filesystem for firmware storage, prefix creation with `VSETUP_CACHE="/mnt/private-hdd/firmware cache"` and choose a directory with enough free disk space.
 
+CFW installation also creates large temporary files. Set `VPHONE_CFW_WORK_PARENT` to place them on another filesystem; unset or empty uses `/var/tmp`. The native CLI requires that parent to be root-owned and private or sticky. For example, create it with `sudo install -d -o root -g root -m 0700 /mnt/private-hdd/vphone-cfw-work`, then set `VPHONE_CFW_WORK_PARENT=/mnt/private-hdd/vphone-cfw-work` for creation. This controls CFW work separately from the firmware cache and VM directory.
+
 ## Create and start a device
 
 List the pinned profiles before creating a device:
