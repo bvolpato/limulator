@@ -2,7 +2,7 @@
 
 Run an iPhone app built with xtool on a local Linux workstation. Install the app into a real iOS guest, interact with it, capture its screen, and run repeatable checks from the terminal or a local web console.
 
-Development status: app compilation, host protocols, lifecycle safeguards, and the console have local validation. A diagnostic iPhone 16 guest running iOS 27.0.1 has rendered BruTV, with the app verified as frontmost. Console unlock, launch, and a coordinate tap focusing its empty server-address field have been observed. That guest still reports DataMigrator `success: false` for build `24A446`, so clean creation and release acceptance remain blocked. Repeatable startup, text entry, accessibility control automation, persistence, playback, software postures, app performance, and Duo/iPad runtime acceptance remain unverified.
+Development status: CounterLab's iPhone 16 profile and functional checks pass in a real iOS 27.0.1 guest, including native scrolling, taps, Unicode input, navigation, and count persistence after app relaunch. A warm Release build with SDK 27.2 took 3.03 seconds. Clean creation is not accepted: DataMigrator still reports `success: false` for build `24A446`. Playback, app performance, repeatable cold startup, and Duo/iPad acceptance remain unverified. See the [current native results](docs/APP_WORKFLOW.md#current-iphone-16-result) for scope and evidence limits.
 
 Limulator uses an emulated ARM64 iPhone. UIKit and SwiftUI run inside iOS; the console displays frames from that guest. A remote Mac and replacement web UI are not the execution path.
 
@@ -23,7 +23,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-VM disks, firmware, SDKs, apps, and private keys are local data and are excluded from Git. The website includes one reviewed diagnostic guest screenshot. Limulator does not redistribute Apple firmware. Locally built ARM64 iPhone apps are the primary input; support for arbitrary App Store binaries is not claimed.
+VM disks, firmware, SDKs, apps, and private keys are local data and are excluded from Git. The website includes four reviewed CounterLab captures from compatible-graphics iPhone 16 runs and one older diagnostic BruTV frame; each image records the specific observation it supports. These captures do not establish complete native acceptance. Limulator does not redistribute Apple firmware. Locally built ARM64 iPhone apps are the primary input; support for arbitrary App Store binaries is not claimed.
 
 ## Credits
 

@@ -48,16 +48,16 @@
           <p class="eyebrow"><span class="eyebrow-dot"></span>Local iOS research runtime</p>
           <h1 id="hero-title">Your Linux box.<br /><em>A native iOS guest.</em></h1>
           <p class="hero-lede">Build an iPhone app with xtool, install it into an emulated iOS device, and drive the native interface from your workstation.</p>
-          <p class="hero-note">BruTV's native login screen has rendered in an iPhone 16 guest on Linux. Device creation and startup still need repair. Touch testing and Duo/iPad validation remain in progress.</p>
+          <p class="hero-note">CounterLab passes native iPhone 16 checks for taps, typing, navigation, and saved state. Clean device creation is still blocked by migration; iPad and Duo validation is pending.</p>
           <div class="hero-actions">
             <a class="button button-dark" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#evidence">Check what is verified <span aria-hidden="true">↘</span></a>
           </div>
-          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>Migration blocks acceptance</span></p>
+          <p class="hero-release"><span class="status-pip pip-amber"></span><span data-release-label>Public research preview</span><span class="release-divider">/</span><span>iPhone smoke passed · full acceptance pending</span></p>
         </div>
 
         <div class="hero-visual" data-hero-visual aria-label="Conceptual diagram of the iPhone 16 portrait profile">
-          <div class="visual-topline"><span data-hero-visual-kind>DEVICE PROFILE / 01</span><span data-hero-visual-mode>SCHEMATIC</span></div>
+          <div class="visual-topline"><span data-hero-visual-kind>DEVICE PROFILE / 02</span><span data-hero-visual-mode>SCHEMATIC</span></div>
           <div class="hero-diagram" data-hero-diagram>
             <svg data-hero-schematic viewBox="0 0 560 360" role="img" aria-labelledby="hero-diagram-title hero-diagram-desc">
               <title id="hero-diagram-title">Conceptual iPhone 16 portrait profile</title>
@@ -82,7 +82,7 @@
             </figure>
           </div>
           <div class="visual-footer">
-            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>Diagnostic UI rendered</span></span>
+            <span><i class="status-pip pip-amber"></i> <span data-hero-guest-state>iPhone app checks passed</span></span>
             <span><span data-hero-guest-device>iPhone 16</span> · <span data-hero-guest-os>iOS 27.0.1</span></span>
           </div>
           <div class="visual-caption" data-hero-visual-caption><span>PROFILE GEOMETRY</span><span>NOT A NATIVE CAPTURE</span></div>
@@ -92,9 +92,9 @@
       <section class="signal-strip" aria-label="Current project status">
         <div class="signal-inner wrap">
           <div class="signal-intro"><span class="signal-cross" aria-hidden="true">+</span><span>WHERE THE WORK STANDS</span></div>
-          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>iPhone 16 guest</span><strong data-status-value>Diagnostic UI rendered</strong><span class="signal-state" data-guest-os>iOS 27.0.1</span></div>
+          <div class="signal-item" data-status="guest"><span class="signal-label" data-guest-device>iPhone 16 guest</span><strong data-status-value>iPhone app checks passed</strong><span class="signal-state" data-guest-os>iOS 27.0.1</span></div>
           <div class="signal-item" data-status="sample"><span class="signal-label">CounterLab</span><strong data-status-value>IPA built</strong><span class="signal-state">SDK 27.2</span></div>
-          <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>Next validation</strong><span class="signal-state">Not yet verified</span></div>
+          <div class="signal-item" data-status="runtime"><span class="signal-label">Native behavior</span><strong data-status-value>CounterLab smoke passed</strong><span class="signal-state">26 steps · one iPhone run</span></div>
         </div>
       </section>
 
@@ -128,7 +128,7 @@
             <p class="step-kicker">INSTALL &amp; RUN</p>
             <h3>Native iOS</h3>
             <p>Limulator uploads the app, asks iOS to install it, then launches the native process.</p>
-            <span class="step-state" data-workflow-step="runtime">Diagnostic launch only</span>
+            <span class="step-state" data-workflow-step="runtime">CounterLab smoke passed · clean creation pending</span>
           </article>
           <div class="rail-connector connector-pending" aria-hidden="true"><span>evidence</span><i></i></div>
           <article class="workflow-step step-pending">
@@ -136,10 +136,10 @@
             <p class="step-kicker">OBSERVE</p>
             <h3>Input &amp; capture</h3>
             <p>Tap, type, check app state and save genuine frames from the guest for repeatable review.</p>
-            <span class="step-state" data-workflow-step="capture">Diagnostic frame captured</span>
+            <span class="step-state" data-workflow-step="capture">4 compatible CounterLab captures</span>
           </article>
         </div>
-        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>Debug and release CounterLab IPAs build with SDK 27.2. BruTV installed, launched, and rendered on an iPhone 16 diagnostic guest; failed migration still blocks creation acceptance.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
+        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>CounterLab's warm Release build took 3.03 seconds with SDK 27.2. The compatible-graphics 12-step iPhone profile scenario and 26-step functional smoke passed. The smoke took 52.59 seconds, which is scenario time, not app performance. DataMigrator success: false still blocks clean creation.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
       </section>
 
       <section id="profiles" class="profile-section" aria-labelledby="profiles-title">
@@ -153,13 +153,13 @@
           </div>
           <div class="profile-explorer">
             <div class="profile-picker">
-              <div class="picker-label"><span>SELECT TARGET</span><span class="picker-count">01 <i>/</i> 03</span></div>
+              <div class="picker-label"><span>SELECT TARGET</span><span class="picker-count">02 <i>/</i> 03</span></div>
               <div class="profile-tabs" role="tablist" aria-label="Device profile">
-                <button id="tab-duo" class="profile-tab is-selected" type="button" role="tab" aria-selected="true" aria-controls="profile-panel" tabindex="0" data-profile="duo">
+                <button id="tab-duo" class="profile-tab" type="button" role="tab" aria-selected="false" aria-controls="profile-panel" tabindex="-1" data-profile="duo">
                   <span class="tab-symbol tab-duo" aria-hidden="true"><i></i><i></i></span><span><b>iPhone Duo</b><small data-profile-tab-state="duo">Active research target</small></span><span class="tab-arrow" aria-hidden="true">↗</span>
                 </button>
-                <button id="tab-iphone" class="profile-tab" type="button" role="tab" aria-selected="false" aria-controls="profile-panel" tabindex="-1" data-profile="iphone">
-                  <span class="tab-symbol tab-phone" aria-hidden="true"><i></i></span><span><b>iPhone 16</b><small data-profile-tab-state="iphone">Firmware verified</small></span><span class="tab-arrow" aria-hidden="true">↗</span>
+                <button id="tab-iphone" class="profile-tab is-selected" type="button" role="tab" aria-selected="true" aria-controls="profile-panel" tabindex="0" data-profile="iphone">
+                  <span class="tab-symbol tab-phone" aria-hidden="true"><i></i></span><span><b>iPhone 16</b><small data-profile-tab-state="iphone">Profile check passed · acceptance pending</small></span><span class="tab-arrow" aria-hidden="true">↗</span>
                 </button>
                 <button id="tab-ipad" class="profile-tab" type="button" role="tab" aria-selected="false" aria-controls="profile-panel" tabindex="-1" data-profile="ipad">
                   <span class="tab-symbol tab-tablet" aria-hidden="true"><i></i></span><span><b>iPad mini</b><small data-profile-tab-state="ipad">Experimental</small></span><span class="tab-arrow" aria-hidden="true">↗</span>
@@ -167,37 +167,36 @@
               </div>
               <p class="picker-note"><span class="status-pip pip-lime"></span> Profile state reflects validation, not a product promise.</p>
             </div>
-            <div id="profile-panel" class="profile-detail" role="tabpanel" aria-labelledby="tab-duo" tabindex="0">
-              <div class="profile-detail-top"><span class="profile-badge badge-active" data-profile-badge>Active research target</span><span class="profile-reference" data-profile-source>ACTIVE GUEST CONFIGURATION</span></div>
+            <div id="profile-panel" class="profile-detail" role="tabpanel" aria-labelledby="tab-iphone" tabindex="0">
+              <div class="profile-detail-top"><span class="profile-badge badge-research" data-profile-badge>iPhone smoke passed · acceptance pending</span><span class="profile-reference" data-profile-source>COMPATIBLE IPHONE APP SMOKE · ACCEPTANCE PENDING</span></div>
               <div class="profile-detail-grid">
                 <div class="profile-info">
-                  <h3 data-profile-title>iPhone Duo</h3>
-                  <p class="profile-form" data-profile-form>Cover display · active research profile</p>
+                  <h3 data-profile-title>iPhone 16</h3>
+                  <p class="profile-form" data-profile-form>Single display · profile candidate</p>
                   <dl class="profile-specs">
-                    <div><dt>Device family</dt><dd data-profile-device>iPhone Duo</dd></div>
-                    <div><dt>Model</dt><dd data-profile-model>iPhone19,4</dd></div>
-                    <div><dt>Guest OS</dt><dd data-profile-os>iOS 27.1</dd></div>
+                    <div><dt>Device family</dt><dd data-profile-device>iPhone 16</dd></div>
+                    <div><dt>Model</dt><dd data-profile-model>iPhone17,3</dd></div>
+                    <div><dt>Guest OS</dt><dd data-profile-os>iOS 27.0.1</dd></div>
                     <div><dt>Scale</dt><dd data-profile-scale>3× native scale</dd></div>
-                    <div><dt>Display size</dt><dd data-profile-dimensions>1398 × 2034 px</dd></div>
-                    <div><dt>Software postures</dt><dd data-profile-postures>Closed · book · open</dd></div>
-                    <div data-inner-display-row><dt>Inner display</dt><dd data-profile-inner-display>2007 × 2853 px @ 3×</dd></div>
+                    <div><dt>Display size</dt><dd data-profile-dimensions>1179 × 2556 px</dd></div>
+                    <div><dt>Software postures</dt><dd data-profile-postures>Single display · iPhone profile checked</dd></div>
+                    <div data-inner-display-row hidden><dt>Inner display</dt><dd data-profile-inner-display></dd></div>
                   </dl>
-                  <p class="profile-note" data-profile-note>Experimental: a virtual inner iOS display is composited onto one visible cover framebuffer, with software postures. Guest startup needs repair before native layout, touch, or posture behavior can be checked. The physical hinge and second physical scanout are outside this emulation.</p>
+                  <p class="profile-note" data-profile-note>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. The smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode input, Home, and count persistence after app relaunch. DataMigrator success: false still blocks clean creation. Repeatable cold guest startup, playback, app performance, Duo, and iPad behavior remain unverified.</p>
                 </div>
                 <div class="profile-graphic">
                   <div class="graphic-label"><span>DISPLAY MAP</span><span>CONCEPTUAL · NOT TO SCALE</span></div>
                   <div class="profile-diagram" data-profile-diagram aria-live="polite">
-                    <svg viewBox="0 0 360 230" role="img" aria-label="Conceptual iPhone Duo cover framebuffer layout; experimental inner display and software postures are not shown">
+                    <svg viewBox="0 0 360 230" role="img" aria-label="Conceptual iPhone 16 portrait display layout">
                       <g class="diagram-device">
-                        <rect x="118" y="10" width="124" height="196" rx="21" />
+                        <rect x="135" y="10" width="90" height="195" rx="20" />
                       </g>
-                      <text x="180" y="118" text-anchor="middle">COVER</text>
-                      <text x="180" y="221" text-anchor="middle">one visible framebuffer · cover profile</text>
+                      <text x="180" y="221" text-anchor="middle">single panel · portrait</text>
                     </svg>
                   </div>
                 </div>
               </div>
-              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>Startup repair required before native app validation.</span></span><span data-profile-evidence>Profile 01 / 03</span></div>
+              <div class="profile-detail-bottom"><span><i class="status-pip pip-amber" data-profile-pip></i><span data-profile-state>The iPhone profile and app smoke passed; clean creation remains blocked.</span></span><span data-profile-evidence>Profile 02 / 03</span></div>
             </div>
           </div>
         </div>
@@ -214,16 +213,16 @@
         <div class="evidence-board">
           <div class="evidence-board-head">
             <div><span class="evidence-overline">NATIVE CAPTURE ARCHIVE</span><h3>iOS guest frames</h3></div>
-            <span class="archive-count" data-capture-count>0 captures</span>
+            <span class="archive-count" data-capture-count>5 captures</span>
           </div>
           <div class="capture-grid" data-capture-grid>
             <div class="capture-empty">
               <div class="empty-frame" aria-hidden="true">
                 <span class="empty-corner corner-tl"></span><span class="empty-corner corner-tr"></span><span class="empty-corner corner-bl"></span><span class="empty-corner corner-br"></span>
                 <svg viewBox="0 0 64 64" fill="none"><rect x="11" y="13" width="42" height="38" rx="5"/><circle cx="32" cy="32" r="8"/><path d="m17 47 11-10 7 6 5-5 7 9"/></svg>
-                <span>NO FRAME YET</span>
+                <span>ARCHIVE LOADING</span>
               </div>
-              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native capture pending</span><h4>Capture frames from the guest.</h4><p>Guest frames are captured from the iOS framebuffer after boot and app launch. Each image carries its model, OS, display path and validation context.</p></div>
+              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native evidence archive</span><h4>Loading the guest captures.</h4><p>CounterLab frames include a passed compatible-graphics smoke. The earlier BruTV frame remains diagnostic; each image carries its profile and validation context.</p></div>
             </div>
           </div>
           <div class="evidence-board-foot"><span>Capture source: local iOS guest framebuffer</span><span data-capture-footnote>Native frame source and profile metadata are recorded.</span></div>
@@ -233,22 +232,22 @@
             <span class="proof-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span>
             <p class="proof-label" data-proof-label="sample">VERIFIED BUILD</p>
             <h3>CounterLab app artifact</h3>
-            <p>An ARM64 IPA built with xtool and the Xcode 27.2 SDK.</p>
+            <p>CounterLab's warm Release build took 3.03 seconds with the Xcode 27.2 SDK. This is build time, not app performance.</p>
             <span class="proof-state" data-proof-state="sample">Build step complete</span>
           </article>
           <article class="proof-column proof-progress">
             <span class="proof-mark" aria-hidden="true"><i></i></span>
-            <p class="proof-label" data-proof-label="guest">DIAGNOSTIC OBSERVATION</p>
+            <p class="proof-label" data-proof-label="guest">IPHONE APP CHECKS</p>
             <h3>iPhone 16 / iOS 27.0.1</h3>
-            <p>An iPhone 16 diagnostic guest rendered its native lock screen and BruTV login UI. BruTV was installed and verified as the frontmost app. DataMigrator still reports success: false for build 24A446; clean creation and release acceptance remain blocked.</p>
-            <span class="proof-state" data-proof-state="guest">Migration failed · 24A446</span>
+            <p>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. DataMigrator still reports success: false for build 24A446; clean creation remains blocked.</p>
+            <span class="proof-state" data-proof-state="guest">iPhone smoke passed · creation pending</span>
           </article>
           <article class="proof-column proof-next">
             <span class="proof-mark" aria-hidden="true"><span></span></span>
-            <p class="proof-label" data-proof-label="runtime">NATIVE ACCEPTANCE</p>
-            <h3>Interaction checks pending</h3>
-            <p>The console unlocked the guest, launched BruTV, and focused an empty login field with a coordinate tap. Text entry, accessibility control automation, persistence, playback, software postures, CounterLab interaction acceptance, and app performance remain unverified. Duo and iPad still need native validation.</p>
-            <span class="proof-state" data-proof-state="runtime">Acceptance pending</span>
+            <p class="proof-label" data-proof-label="runtime">FUNCTIONAL SMOKE PASSED</p>
+            <h3>iPhone interaction checked</h3>
+            <p>The 26-step CounterLab smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count persistence after app relaunch. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified.</p>
+            <span class="proof-state" data-proof-state="runtime">26 steps passed · acceptance pending</span>
           </article>
         </div>
       </section>
@@ -295,7 +294,7 @@
             <div class="prereq-note"><span class="prereq-icon" aria-hidden="true">↗</span><p><strong>Before you start</strong>Ubuntu 24.04 family, x86_64, NVIDIA Vulkan, user systemd, sudo, 32 GiB available RAM, 4 GiB free swap, and about 100 GiB free disk for one profile.</p><a href="https://github.com/bvolpato/limulator/blob/main/docs/SETUP.md" target="_blank" rel="noreferrer">Full setup requirements <span aria-hidden="true">↗</span></a></div>
           </div>
           <div id="command-panel" class="command-panel" role="tabpanel" aria-labelledby="command-tab-bootstrap" aria-live="polite" tabindex="0">
-            <div class="terminal-topbar"><div class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></div><span data-command-label>HOST / BOOTSTRAP</span><span class="terminal-profile" data-command-profile>DUO / IPHONE-DUO</span><button class="copy-button" type="button" data-copy aria-label="Copy these commands"><span>Copy</span><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="9" rx="1.5"/><path d="M11 5V3.7A1.7 1.7 0 0 0 9.3 2H4.7A1.7 1.7 0 0 0 3 3.7v6.6A1.7 1.7 0 0 0 4.7 12H5"/></svg></button></div>
+            <div class="terminal-topbar"><div class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></div><span data-command-label>HOST / BOOTSTRAP</span><span class="terminal-profile" data-command-profile>IPHONE 16 / IPHONE-16</span><button class="copy-button" type="button" data-copy aria-label="Copy these commands"><span>Copy</span><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="9" rx="1.5"/><path d="M11 5V3.7A1.7 1.7 0 0 0 9.3 2H4.7A1.7 1.7 0 0 0 3 3.7v6.6A1.7 1.7 0 0 0 4.7 12H5"/></svg></button></div>
             <pre><code data-command-code>uv sync --python 3.12
 uv run limulator bootstrap deps
 uv run limulator bootstrap all
@@ -304,8 +303,8 @@ uv run limulator doctor</code></pre>
             <p class="terminal-caption" data-command-caption>Build the pinned Linux backend, install xtool from your Xcode SDK archive, then check local prerequisites.</p>
             <aside class="terminal-research-note" role="note" aria-label="Research-only command examples">
               <strong>Research only · native acceptance pending</strong>
-              <p data-command-research aria-live="polite">iPhone Duo: Restore and research guest installation are complete. Guest startup needs repair before native app validation can continue.</p>
-              <span>Guest command examples remain research only until this profile passes native acceptance.</span>
+              <p data-command-research aria-live="polite">iPhone 16: The compatible profile scenario and 26-step CounterLab smoke passed. DataMigrator success: false still blocks clean creation.</p>
+              <span>Guest command examples remain research only until the selected profile passes native acceptance.</span>
             </aside>
             <div class="terminal-status"><span><i class="status-pip pip-lime"></i> Runs locally</span><span>Python 3.12 · Ubuntu-family host</span></div>
             <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
@@ -354,11 +353,11 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>Is the native app workflow already proven?<span aria-hidden="true">+</span></summary>
-              <p data-faq-runtime>Debug and release CounterLab IPAs build with SDK 27.2. BruTV renders in an iPhone 16 guest, and console unlock, launch, and a coordinate tap focusing its server field have been observed. DataMigrator still reports success: false for build 24A446. Clean creation, repeatable startup, text entry, accessibility control automation, persistence, playback, app performance, and Duo/iPad runtime acceptance remain unverified.</p>
+              <p data-faq-runtime>A compatible-graphics iPhone 16 run rebooted to API ready with CounterLab count 1 retained; a targeted semantic tap changed it to 2. The 12-step profile scenario passed its OS, idiom, point-size, and scale checks. The CounterLab smoke passed; DataMigrator success: false still blocks clean creation. Repeatable cold startup, playback, app performance, and Duo/iPad behavior remain unverified.</p>
             </details>
             <details>
               <summary>Can I use any iPhone, iPad, or App Store app?<span aria-hidden="true">+</span></summary>
-              <p>Compatibility is profile-specific. The Duo profile has one visible cover framebuffer, an experimental software inner iOS display and software fold postures; native layout and touch behavior remain unverified. The iPhone 16 has a diagnostic BruTV render with failed migration, so creation and runtime acceptance remain pending. The iPad mini awaits native UIKit .pad checks. Locally built ARM64 apps are the intended input; encrypted App Store executables are rejected.</p>
+              <p>Compatibility is profile-specific. The Duo profile has one visible cover framebuffer, an experimental software inner iOS display and software fold postures; native layout and touch behavior remain unverified. The iPhone 16 profile scenario and CounterLab smoke passed, but DataMigrator success: false blocks clean creation. The iPad mini awaits native UIKit .pad checks. Locally built ARM64 apps are the intended input; encrypted App Store executables are rejected.</p>
             </details>
             <details>
               <summary>Does a passing QEMU benchmark mean my app will run faster?<span aria-hidden="true">+</span></summary>

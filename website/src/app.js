@@ -131,7 +131,7 @@ function configureCommands() {
   const code = $("[data-command-code]");
   const copy = $("[data-copy]");
   let selectedCommand = "bootstrap";
-  let deviceProfile = { label: "iPhone Duo", profileId: "iphone-duo", deviceName: "duo" };
+  let deviceProfile = { label: "iPhone 16", profileId: "iphone-16", deviceName: "iphone-16" };
 
   function commandFor(command) {
     if (command === "create") {

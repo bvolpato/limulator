@@ -2,41 +2,197 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "Migration blocks acceptance",
-    "publicStatus": "Source is public. Diagnostic native UI has rendered; clean creation and release acceptance remain blocked."
+    "detail": "iPhone smoke passed · clean creation pending",
+    "publicStatus": "Source is public as a research preview. The compatible-graphics iPhone 16 profile scenario and the 26-step CounterLab functional smoke passed. DataMigrator success: false still blocks clean creation acceptance; Duo and iPad behavior, playback, repeatable cold startup, and app performance remain unverified."
   },
   "guest": {
-    "label": "iPhone 16 diagnostic",
-    "status": "diagnostic-render",
-    "value": "Diagnostic UI rendered",
+    "label": "iPhone 16 compatible run",
+    "status": "native-smoke-passed",
+    "value": "iPhone app checks passed",
     "device": "iPhone 16",
     "os": "iOS 27.0.1",
-    "workflowValue": "Diagnostic render only",
-    "proofLabel": "DIAGNOSTIC OBSERVATION",
-    "proofValue": "Migration failed · 24A446",
-    "detail": "An iPhone 16 diagnostic guest rendered its native lock screen and BruTV login UI. BruTV was installed and verified as the frontmost app. DataMigrator still reports success: false for build 24A446; clean creation and release acceptance remain blocked."
+    "workflowValue": "iPhone app checks passed",
+    "proofLabel": "IPHONE APP SMOKE",
+    "proofValue": "26-step compatible run passed",
+    "detail": "A fresh iPhone 16 guest running iOS 27.0.1, build 24A446, completed ordinary Setup Assistant through the UI without setup or migration marker edits. The controlled 12-step profile scenario passed OS, UIKit idiom, point-size, and scale checks. A separate compatible-graphics CounterLab smoke passed all 26 steps, including reset and increment, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count 1 after app terminate/relaunch. The note is transient. DataMigrator success: false leaves clean creation unaccepted."
   },
   "sample": {
     "label": "CounterLab · SDK 27.2",
     "status": "verified-build",
     "value": "IPA built",
-    "detail": "A CounterLab IPA was produced with xtool and the Xcode 27.2 SDK. This proves the build step only."
+    "detail": "CounterLab's warm Release build took 3.03 seconds with the Xcode 27.2 SDK. This proves the build step only and does not measure app performance."
   },
   "runtime": {
     "label": "Native runtime proof",
-    "status": "pending",
-    "value": "Acceptance pending",
-    "proofLabel": "NATIVE ACCEPTANCE",
-    "workflowValue": "Diagnostic launch only",
-    "captureValue": "Diagnostic frame captured",
-    "detail": "The console unlocked the guest, launched BruTV, and focused an empty login field with a coordinate tap. Text entry, accessibility control automation, persistence, playback, software postures, CounterLab interaction acceptance, and app performance remain unverified. Duo and iPad still need native validation.",
-    "faq": "Debug and release CounterLab IPAs build with SDK 27.2. BruTV renders in an iPhone 16 guest, and console unlock, launch, and a coordinate tap focusing its server field have been observed. DataMigrator still reports success: false for build 24A446. Clean creation, repeatable startup, text entry, accessibility control automation, persistence, playback, app performance, and Duo/iPad runtime acceptance remain unverified."
+    "status": "acceptance-pending",
+    "value": "iPhone smoke passed · acceptance pending",
+    "proofLabel": "FUNCTIONAL SMOKE PASSED",
+    "workflowValue": "CounterLab smoke passed · 26 steps",
+    "captureValue": "4 compatible CounterLab captures",
+    "detail": "The compatible-graphics CounterLab smoke passed all 26 steps in one iPhone 16 run. It verified reset and increment, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count 1 after app terminate/relaunch. The 52.59-second duration is scenario time, not an app performance measurement. A separate 12-step iPhone profile scenario passed its OS, idiom, point-size, and scale checks. DataMigrator success: false still blocks clean creation acceptance. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified.",
+    "faq": "A 26-step CounterLab smoke passed in compatible graphics on one iPhone 16 run. It verified reset and increment, semantic scrolling and taps, Details navigation, Unicode text input, Home, and count 1 after app terminate/relaunch. The 52.59-second scenario duration is not an app performance measurement. The 12-step iPhone profile scenario also passed its OS, idiom, point-size, and scale checks. DataMigrator success: false still blocks clean creation. Repeatable cold guest startup, playback, app performance, and Duo/iPad behavior remain unverified."
   },
-  "workflowNote": "Debug and release CounterLab IPAs build with SDK 27.2. BruTV installed, launched, and rendered on an iPhone 16 diagnostic guest; failed migration still blocks creation acceptance.",
+  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2. The compatible-graphics iPhone 16 profile scenario and the 26-step CounterLab functional smoke passed. The smoke verified native interactions, Unicode input, navigation, and count 1 after app terminate/relaunch; its 52.59-second duration is scenario time, not an app performance measurement. DataMigrator success: false and the unchanged host creation receipt block clean creation; repeatable cold guest startup, playback, app performance, and Duo/iPad checks remain unverified.",
   "faq": {
-    "release": "The source repository is public as a research preview. Native app execution and device profiles are still being validated; public source availability does not establish runtime compatibility."
+    "release": "The public preview includes a passed compatible-graphics iPhone 16 profile scenario and a passed 26-step CounterLab smoke, plus a separate diagnostic BruTV frame. DataMigrator success: false still blocks clean creation acceptance. Duo and iPad behavior, playback, repeatable cold guest startup, and app performance remain unverified."
+  },
+  "nativeObservation": {
+    "compatibleRun": {
+      "observedOn": "2026-11-07",
+      "runId": "run-739e8327",
+      "device": "iPhone 16 · iPhone17,3",
+      "guestOs": "iOS 27.0.1",
+      "firmwareBuild": "24A446",
+      "graphicsMode": "compatible",
+      "qemuEnvironment": {
+        "REIMS_VGPU_STRICT": "0",
+        "REIMS_VGPU_CENSUS_DIR": "unset",
+        "REIMS_VGPU_EXACT": "unset"
+      },
+      "guestReboot": {
+        "apiReady": true,
+        "countAfterReboot": 1
+      },
+      "semanticTap": {
+        "identifier": "counterlab.increment",
+        "visibleElements": 1,
+        "tapped": true,
+        "countBefore": 1,
+        "countAfter": 2
+      },
+      "nativeTextInput": {
+        "method": "semantic note focus plus Unicode HID",
+        "value": "Linux native input ✓",
+        "persisted": false
+      },
+      "uikit": {
+        "idiom": "iPhone",
+        "pointSize": [
+          393,
+          852
+        ],
+        "scale": 3
+      },
+      "httpsRequest": {
+        "destination": "example.com",
+        "count": 1,
+        "status": 200,
+        "accountOrAppDataSent": false
+      },
+      "profileScenario": {
+        "status": "passed",
+        "scenario": "iphone-16.json",
+        "stepCount": 12,
+        "durationSeconds": 30.979974180983845,
+        "reportSha256": "0c9c2e5bfab82ced6c57ccec1e5efc9297fe08ac223c5a3673e38b98dc4e378d",
+        "assertions": [
+          "iOS version",
+          "UIKit idiom",
+          "point size",
+          "scale"
+        ],
+        "accepted": false
+      },
+      "previousProfileAttempt": {
+        "status": "failed",
+        "axElementQueryError": -25216
+      },
+      "fullNativeFunctionalSmoke": {
+        "status": "passed",
+        "scenario": "smoke.json",
+        "stepCount": 26,
+        "durationSeconds": 52.58796693899785,
+        "durationScope": "Scenario duration only; not an app performance measurement.",
+        "reportSha256": "aaca72c6ef5881dd10d213e8d870b845d579e65e7124a128eed9629adb250311",
+        "verified": [
+          "Counter reset and increment",
+          "Semantic scrolling and taps",
+          "Details navigation",
+          "Unicode text input: Hello from Linux ✓",
+          "Home navigation",
+          "Count 1 persisted after app terminate and relaunch"
+        ]
+      }
+    },
+    "setup": {
+      "ordinarySetupAssistantCompletedThroughUi": true,
+      "migrationSuccess": false,
+      "migrationBuild": "24A446",
+      "cleanCreationAccepted": false,
+      "creationReceiptUnchanged": true,
+      "creationReceiptSha256": "e7c64eab672313f55923fa95b33da0996070d05e4ff28e7af251b9ac8610184c",
+      "creationMarkersSha256": "629508eda9737d672a837c614d8f2a19879ae5311dec8112c5e61ac4bfef333f",
+      "migrationOrSetupMarkersEdited": false,
+      "bootedMarkerPresent": false
+    },
+    "softwareProvenance": {
+      "backendRevision": "ac0b58547f3383fb6b7e003fe295630a1124b897",
+      "vphoneCliRevision": "0b896ef8cf9c08f2c2acbe8874bd83162852e3a8",
+      "qemuRevision": "fa07541ef65ea1a2963483ded299557152c754cb",
+      "binarySha256": {
+        "vphoneCli": "767c5197404907b902ce9453982b894a4e499b015e28160806a11675d9929ab9",
+        "qemu": "a132c761e563593f2c85ce381ec160b5fcfb6ee19995975a4917944a7a2123cc"
+      },
+      "sourceFileSha256": {
+        "processRunner": "8cf1ac62acd09444ca7ff23b12a24615d1cd012746ad5824dd3ba60a8796d4e1"
+      }
+    }
   },
   "captures": [
+    {
+      "file": "assets/native/counterlab-iphone16-compatible-count-1-after-reboot-2026-11-07.png",
+      "title": "CounterLab · count retained after reboot",
+      "alt": "CounterLab's main screen on an iPhone 16 guest shows the saved count at 1 after the guest rebooted.",
+      "context": "CounterLab retained its count after this iPhone 16 guest restarted. This native capture uses compatible rendering; clean device creation remains blocked by a migration failure.",
+      "device": "iPhone 16 · iPhone17,3",
+      "os": "iOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 393 × 852 pt @ 3×",
+      "sha256": "0fb1477effe16b6929ff2a233a347a59990b39e6d57f18a9d0e10cea97043523",
+      "provenance": "Direct native QMP screenshot from compatible run run-739e8327, 7 Nov 2026; image bytes are unedited.",
+      "graphicsMode": "compatible",
+      "accepted": false
+    },
+    {
+      "file": "assets/native/counterlab-iphone16-smoke-native-text-input-2026-11-07.png",
+      "title": "CounterLab · native text input in passed smoke",
+      "alt": "During the passed compatible-graphics smoke, CounterLab's note field shows Hello from Linux followed by a check mark.",
+      "context": "Direct screenshot from step 21 of the 26-step CounterLab smoke. Native text input, semantic scrolling and taps, and navigation all passed in this run. The note uses transient state and its persistence was not tested.",
+      "device": "iPhone 16 · iPhone17,3",
+      "os": "iOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 393 × 852 pt @ 3×",
+      "sha256": "df2458bc14442dae1cd5f8ce762ec63a748d82064c6e94067c431d6286a9709c",
+      "provenance": "Direct copy from native QMP screenshot step 21 in counterlab-compatible-smoke-axvalue, 7 Nov 2026; image bytes are unedited.",
+      "graphicsMode": "compatible",
+      "accepted": false,
+      "scenarioPassed": true
+    },
+    {
+      "file": "assets/native/counterlab-iphone16-smoke-persisted-after-relaunch-2026-11-07.png",
+      "title": "CounterLab · count persisted after app relaunch",
+      "alt": "After app termination and relaunch in the passed compatible-graphics smoke, CounterLab shows the saved count at 1.",
+      "context": "Direct screenshot from step 26 of the 26-step CounterLab smoke. Count 1 remained after app terminate/relaunch in this guest. This demonstrates app-process persistence in one run, not repeatable cold guest startup.",
+      "device": "iPhone 16 · iPhone17,3",
+      "os": "iOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 393 × 852 pt @ 3×",
+      "sha256": "8929d259873ce179239db5d745d5566a41c89c7ad9bd9c3507ed1765bd77c0f7",
+      "provenance": "Direct copy from native QMP screenshot step 26 in counterlab-compatible-smoke-axvalue, 7 Nov 2026; image bytes are unedited.",
+      "graphicsMode": "compatible",
+      "accepted": false,
+      "scenarioPassed": true
+    },
+    {
+      "file": "assets/native/counterlab-iphone16-compatible-network-metrics-2026-11-07.png",
+      "title": "CounterLab · native metrics and HTTPS response",
+      "alt": "CounterLab reports iOS 27.0.1, the iPhone idiom, 393 by 852 point screen size at 3x, and Connected: HTTP 200 for example.com.",
+      "context": "The app read back its native OS and UIKit screen metrics. One read-only HTTPS request to example.com returned HTTP 200 in compatible graphics. The screenshot also shows the known transient test note; it does not establish general network reliability or app performance.",
+      "device": "iPhone 16 · iPhone17,3",
+      "os": "iOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 393 × 852 pt @ 3×",
+      "sha256": "d7cb83556b8f9846a3f3dd83427c7c8b64a178f277999a97a8eec68f4063bb3a",
+      "provenance": "Direct native QMP screenshot from compatible run run-739e8327, 7 Nov 2026; image bytes are unedited.",
+      "graphicsMode": "compatible",
+      "accepted": false
+    },
     {
       "file": "assets/native/iphone16-brutv-diagnostic-2026-11-07.png",
       "title": "BruTV login · diagnostic capture",

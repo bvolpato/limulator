@@ -118,6 +118,14 @@ uv run limulator --device "$limulator_device" test \
 
 Each test run needs a new output directory. It writes `report.json` with the recorded graphics policy and guest screenshots. Adapt the JSON scenario and accessibility identifiers for your app. The [setup guide](SETUP.md#run-app-checks) explains scenario actions and their limits. The existence of a scenario does not establish that it has passed on every profile, and a functional pass does not establish full Metal equivalence.
 
+### Current iPhone 16 result
+
+On 7 November 2026, a fresh iPhone 16 guest running iOS 27.0.1, build `24A446`, completed ordinary Setup Assistant through the UI without editing setup or migration markers. DataMigrator still reports `success: false`; the host creation receipt is unchanged and no booted marker is present. This is not accepted clean creation.
+
+A compatible-graphics run had `REIMS_VGPU_STRICT=0`, with `REIMS_VGPU_CENSUS_DIR` and `REIMS_VGPU_EXACT` unset in the actual QEMU environment. One guest reboot reached API ready with CounterLab count `1` retained. A targeted semantic tap on the single visible `counterlab.increment` element returned `tapped: true` and changed the count to `2`. Native UIKit metrics and one read-only HTTPS request to `example.com` returning HTTP 200 were also observed.
+
+A controlled 12-step run of `iphone-16.json` passed its OS version, UIKit idiom, point-size, and scale checks. A separate 26-step run of `smoke.json` passed in compatible graphics. It covered reset and increment, semantic scrolling and taps, Details navigation, Unicode text input (`Hello from Linux ✓`), Home, and count `1` after app terminate/relaunch. The note uses transient state; its persistence was not tested. The run took 52.59 seconds, which is scenario duration, not an app performance measurement. App-process persistence passed once; repeatable cold guest startup remains unverified. Playback, app performance, and Duo/iPad behavior remain unverified.
+
 CounterLab also displays its native OS version and active UIKit screen metrics. On an iPhone 16 guest in portrait, check those values separately:
 
 ```sh
@@ -154,4 +162,4 @@ uv run limulator --device "$limulator_device" stop
 
 For a repository update, stop the guest first, pull without discarding local work, and run `uv sync --locked`. When dependency revisions change, follow [the source migration instructions](UPSTREAM.md#updating-an-existing-installation) and rebuild only the affected backend component. Re-running `bootstrap all`, deleting build caches, or restoring the VM for each app change adds unnecessary work.
 
-Clean guest creation, Duo/iPad behavior, and complete native scenario acceptance remain subject to the limits in the [README](../README.md). A reusable exploratory guest is useful for development but does not establish distribution readiness.
+Clean guest creation, repeatable cold guest startup, playback, app performance, Duo/iPad behavior, and distribution readiness remain subject to the limits in the [README](../README.md). A reusable research guest does not establish these results.

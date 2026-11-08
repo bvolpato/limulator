@@ -26,6 +26,6 @@ The preview server listens at `http://127.0.0.1:4173` by default. The `Publish G
 
 The site reads its validation state from `src/data/evidence.json` and device profiles from `src/data/profiles.json`. Keep those files current as native checks complete.
 
-Add only real guest PNGs under `src/assets/native/`, then add an entry to `captures` with its `file`, `title`, `alt`, `context`, `device`, `os`, and `posture`. The gallery shows the reviewed diagnostic capture currently listed in `captures`; add further images only when they have real guest provenance. App performance results belong in `applicationMeasurements`; keep workload, method, and environment context with each measurement.
+Add only real guest PNGs under `src/assets/native/`, then add an entry to `captures` with its `file`, `title`, `alt`, `context`, `device`, `os`, and `posture`. The gallery currently leads with four direct CounterLab captures from compatible-graphics iPhone 16 runs and retains one older diagnostic BruTV frame. Keep each capture's graphics mode, hash, source, and validation limit with it. App performance results belong in `applicationMeasurements`; keep workload, method, and environment context with each measurement.
 
 Profiles describe validation state, not general iOS support. Update the model, OS, scale, geometry, and evidence status together when a profile is tested.
