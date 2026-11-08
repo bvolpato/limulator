@@ -241,6 +241,73 @@ def test_screen_queries_native_point_bounds_with_the_requested_timeout():
     assert runtime.client.calls == [("device.screen", None)]
 
 
+def test_hinge_status_reads_the_duo_provider_value_with_the_requested_timeout():
+    runtime = Runtime()
+    status = {
+        "enumerated": True,
+        "pid": 42,
+        "updated_at": 123.5,
+        "current_angle": 100,
+        "sweeping": False,
+        "dispatch_failures": 0,
+        "error": "",
+        "configuration": {"enabled": True, "angle": 100},
+    }
+    calls = []
+    timeouts = []
+    runtime.client.rpc = lambda method, params=None: calls.append((method, params)) or {
+        "domain": "com.apple.backboardd",
+        "user": "mobile",
+        "key": "VPhoneHingeStatus",
+        "exists": True,
+        "value": status,
+        "type": "plist",
+    }
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+
+    assert DeviceService(runtime).hinge_status(timeout=0.75) == status
+    assert timeouts == [0.75]
+    assert calls == [
+        ("settings.get", {"domain": "com.apple.backboardd", "key": "VPhoneHingeStatus"})
+    ]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        None,
+        {"values": {}},
+        {"exists": 1, "value": {}},
+        {"exists": True, "value": "not a dictionary"},
+    ],
+)
+def test_hinge_status_rejects_malformed_settings_replies(reply):
+    runtime = Runtime()
+    runtime.client.rpc = lambda *_args, **_kwargs: reply
+
+    with pytest.raises(DeviceError, match="hinge status"):
+        DeviceService(runtime).hinge_status()
+
+
+def test_hinge_status_reports_a_missing_provider_without_fabricating_state():
+    runtime = Runtime()
+    runtime.client.rpc = lambda *_args, **_kwargs: {
+        "domain": "com.apple.backboardd",
+        "user": "mobile",
+        "key": "VPhoneHingeStatus",
+        "exists": False,
+        "value": None,
+        "type": "unknown",
+    }
+
+    assert DeviceService(runtime).hinge_status() is None
+
+
 def test_unlock_allows_sixty_seconds_in_the_guest_with_a_longer_host_deadline():
     runtime = Runtime()
     timeouts = []
@@ -411,8 +478,11 @@ def test_unlock_persistent_lock_fallback_is_bounded(
 def test_phone_cannot_send_fold_commands_to_guest():
     runtime = Runtime()
     runtime.device.model = "iPhone17,3"
+    service = DeviceService(runtime)
     with pytest.raises(DeviceError, match="only available on iPhone Duo"):
-        DeviceService(runtime).fold("open")
+        service.fold("open")
+    with pytest.raises(DeviceError, match="only available on iPhone Duo"):
+        service.hinge_status()
     assert runtime.client.calls == []
 
 

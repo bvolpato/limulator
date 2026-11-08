@@ -304,6 +304,23 @@ class DeviceService:
             result = guest.rpc("display.posture", {"position": position})
             return result
 
+    def hinge_status(self, timeout: float = 60) -> dict | None:
+        """Read the pinned Duo hinge provider's status without changing guest preferences."""
+        if not self.supports_fold:
+            raise DeviceError("Hinge status is only available on iPhone Duo")
+        with self._interaction():
+            reply = self.runtime.guest(timeout=timeout).rpc(
+                "settings.get",
+                {"domain": "com.apple.backboardd", "key": "VPhoneHingeStatus"},
+            )
+        if not isinstance(reply, dict) or type(reply.get("exists")) is not bool:
+            raise DeviceError("Guest returned an invalid hinge status response")
+        if not reply["exists"]:
+            return None
+        if not isinstance(reply.get("value"), dict):
+            raise DeviceError("Guest returned a malformed hinge status value")
+        return reply["value"]
+
     def unlock(self) -> dict:
         method_started = time.monotonic()
         with self._interaction():

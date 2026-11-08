@@ -38,11 +38,15 @@ _MAX_STEPS = 100
 _MAX_REPORT_RESULT_BYTES = 64 << 10
 _MAX_TREE_NODES = 100_000
 _WAIT_TEXT_POLL_SECONDS = 0.25
+_WAIT_HINGE_POLL_SECONDS = 0.25
 _MAX_AX_ERROR_BODY_BYTES = 4096
 _AX_READINESS_ERRORS = frozenset({"AX element query failed (-25215)", "AX element query failed (-25216)"})
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
 _BUTTONS = {"home", "lock", "volume-up", "volume-down"}
 _FOLD_POSITIONS = {"closed", "book", "open"}
+_HINGE_TARGET_ANGLES = {"closed": 0.0, "book": 100.0, "open": 180.0}
+_HINGE_STABLE_READBACKS = 3
+_HINGE_HEARTBEAT_ADVANCES = 2
 _BUNDLE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SCREENSHOT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -213,6 +217,27 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
                     f"step {index} fold position must be one of {', '.join(sorted(_FOLD_POSITIONS))}"
                 )
             call = {"position": position}
+        elif action == "capture_hinge_baseline":
+            required, optional = {"position"}, set()
+            position = _string(step.get("position"), f"step {index} hinge position", maximum=16)
+            if position not in _HINGE_TARGET_ANGLES:
+                raise ValueError(
+                    f"step {index} hinge position must be one of {', '.join(sorted(_HINGE_TARGET_ANGLES))}"
+                )
+            call = {"position": position}
+        elif action == "wait_hinge":
+            required, optional = {"position"}, {"timeout"}
+            position = _string(step.get("position"), f"step {index} hinge position", maximum=16)
+            if position not in _HINGE_TARGET_ANGLES:
+                raise ValueError(
+                    f"step {index} hinge position must be one of {', '.join(sorted(_HINGE_TARGET_ANGLES))}"
+                )
+            timeout = _number(step.get("timeout", 30), f"step {index} timeout")
+            if not 0 < timeout <= 120:
+                raise ValueError(
+                    f"step {index} hinge timeout must be greater than 0 and at most 120 seconds"
+                )
+            call = {"position": position, "timeout": timeout}
         elif action == "terminate":
             required, optional = {"bundle_id"}, set()
             call = {"bundle_id": _bundle_id(step.get("bundle_id"), f"step {index} bundle_id")}
@@ -614,12 +639,217 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
         time.sleep(min(0.25, remaining()))
 
 
+def _hinge_number(value: Any, name: str) -> float:
+    try:
+        return _number(value, name)
+    except ValueError as error:
+        raise ScenarioError(f"Guest returned invalid hinge status: {error}") from error
+
+
+def _hinge_flag(value: Any, name: str) -> bool:
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    raise ScenarioError(f"Guest returned an invalid hinge {name} flag")
+
+
+def _hinge_status_fields(status: Any) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        raise ScenarioError("Guest returned an invalid hinge status value")
+    enumerated = _hinge_flag(status.get("enumerated"), "enumerated")
+    sweeping = _hinge_flag(status.get("sweeping"), "sweeping")
+    pid = status.get("pid")
+    service_id = status.get("service_id")
+    failures = status.get("dispatch_failures")
+    error = status.get("error")
+    if type(pid) is not int or pid <= 0:
+        raise ScenarioError("Guest returned an invalid hinge provider PID")
+    if type(service_id) is not int or service_id <= 0:
+        raise ScenarioError("Guest returned an invalid hinge service ID")
+    if type(failures) is not int or failures < 0:
+        raise ScenarioError("Guest returned an invalid hinge dispatch-failure count")
+    if not isinstance(error, str) or "\0" in error:
+        raise ScenarioError("Guest returned an invalid hinge provider error")
+
+    updated_at = _hinge_number(status.get("updated_at"), "updated_at")
+    angle = _hinge_number(status.get("current_angle"), "current_angle")
+    configuration = status.get("configuration")
+    if not isinstance(configuration, dict):
+        raise ScenarioError("Guest returned an invalid hinge configuration")
+    enabled = _hinge_flag(configuration.get("enabled"), "configuration enabled")
+    configured_angle = _hinge_number(configuration.get("angle"), "configuration.angle")
+    if not 0 <= angle <= 180 or not 0 <= configured_angle <= 180:
+        raise ScenarioError("Guest returned a hinge angle outside 0 through 180 degrees")
+    if updated_at <= 0:
+        raise ScenarioError("Guest returned an invalid hinge status timestamp")
+    return {
+        "enumerated": enumerated,
+        "sweeping": sweeping,
+        "pid": pid,
+        "service_id": service_id,
+        "dispatch_failures": failures,
+        "error": error,
+        "updated_at": updated_at,
+        "current_angle": angle,
+        "configuration_enabled": enabled,
+        "configured_angle": configured_angle,
+    }
+
+
+def _capture_hinge_baseline(service: DeviceService) -> dict[str, Any]:
+    status = service.hinge_status()
+    if status is None:
+        raise ScenarioError("cannot capture a pre-fold hinge baseline: the provider status is absent")
+    fields = _hinge_status_fields(status)
+    if (
+        not fields["enumerated"]
+        or fields["sweeping"]
+        or fields["error"]
+        or not fields["configuration_enabled"]
+        or abs(fields["configured_angle"] - fields["current_angle"]) > 1
+    ):
+        raise ScenarioError(
+            "cannot capture a pre-fold hinge baseline until the provider reports an enumerated, "
+            "settled, error-free posture"
+        )
+    return fields
+
+
+def _wait_hinge(
+    service: DeviceService,
+    action: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    deadline = started + action["timeout"]
+    target = _HINGE_TARGET_ANGLES[action["position"]]
+    failure_baseline_scope = "pre_fold" if baseline is not None else "wait_window"
+    baseline_fields = baseline
+    first_updated_at = baseline["updated_at"] if baseline is not None else None
+    previous_updated_at = first_updated_at
+    healthy_heartbeat_advances = 0
+    healthy_first_updated_at: float | None = None
+    previous_healthy_updated_at: float | None = None
+    stable_readbacks = 0
+    readbacks = 0
+    last_summary = "provider status is not available"
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ScenarioError(
+                f"timed out waiting for a fresh settled hinge status at {target:g} degrees "
+                f"for {action['position']!r} after {readbacks} readbacks; {last_summary}"
+            )
+        return value
+
+    while True:
+        status = service.hinge_status(timeout=remaining())
+        readbacks += 1
+        now = time.monotonic()
+        if now >= deadline:
+            raise ScenarioError(
+                f"timed out waiting for a fresh settled hinge status at {target:g} degrees "
+                f"for {action['position']!r} after {readbacks} readbacks; {last_summary}"
+            )
+        if status is None:
+            stable_readbacks = 0
+            healthy_heartbeat_advances = 0
+            healthy_first_updated_at = None
+            previous_healthy_updated_at = None
+            last_summary = "the hinge provider has not published a status value"
+            time.sleep(min(_WAIT_HINGE_POLL_SECONDS, deadline - now))
+            continue
+
+        fields = _hinge_status_fields(status)
+        if baseline_fields is None:
+            baseline_fields = fields
+            first_updated_at = fields["updated_at"]
+            previous_updated_at = fields["updated_at"]
+        else:
+            if fields["pid"] != baseline_fields["pid"] or fields["service_id"] != baseline_fields["service_id"]:
+                raise ScenarioError("hinge provider PID or service ID changed during the measured fold")
+            if fields["dispatch_failures"] != baseline_fields["dispatch_failures"]:
+                change = (
+                    "increased"
+                    if fields["dispatch_failures"] > baseline_fields["dispatch_failures"]
+                    else "decreased"
+                )
+                raise ScenarioError(
+                    f"hinge provider dispatch_failures {change} from the {failure_baseline_scope} "
+                    f"baseline ({baseline_fields['dispatch_failures']} to {fields['dispatch_failures']})"
+                )
+        if first_updated_at is None:
+            first_updated_at = fields["updated_at"]
+        if previous_updated_at is not None and fields["updated_at"] < previous_updated_at:
+            raise ScenarioError("Guest hinge status updated_at moved backwards")
+        previous_updated_at = fields["updated_at"]
+
+        healthy = (
+            fields["enumerated"]
+            and not fields["sweeping"]
+            and fields["error"] == ""
+            and fields["configuration_enabled"]
+            and abs(fields["configured_angle"] - target) <= 1
+            and abs(fields["current_angle"] - target) <= 1
+        )
+        if healthy:
+            if healthy_first_updated_at is None:
+                healthy_first_updated_at = fields["updated_at"]
+            if (
+                previous_healthy_updated_at is not None
+                and fields["updated_at"] > previous_healthy_updated_at
+            ):
+                healthy_heartbeat_advances += 1
+            previous_healthy_updated_at = fields["updated_at"]
+            stable_readbacks += 1
+        else:
+            healthy_first_updated_at = None
+            previous_healthy_updated_at = None
+            healthy_heartbeat_advances = 0
+            stable_readbacks = 0
+        last_summary = (
+            f"angle={fields['current_angle']:g}, enumerated={fields['enumerated']}, "
+            f"pid={fields['pid']}, service_id={fields['service_id']}, "
+            f"sweeping={fields['sweeping']}, error={fields['error']!r}, "
+            f"stable_readbacks={stable_readbacks}, "
+            f"healthy_heartbeat_advances={healthy_heartbeat_advances}"
+        )
+        if (
+            first_updated_at is not None
+            and fields["updated_at"] > first_updated_at
+            and healthy_first_updated_at is not None
+            and healthy_heartbeat_advances >= _HINGE_HEARTBEAT_ADVANCES
+            and stable_readbacks >= _HINGE_STABLE_READBACKS
+        ):
+            assert baseline_fields is not None
+            return {
+                "position": action["position"],
+                "target_angle": target,
+                "current_angle": fields["current_angle"],
+                "enumerated": fields["enumerated"],
+                "pid": fields["pid"],
+                "service_id": fields["service_id"],
+                "sweeping": fields["sweeping"],
+                "baseline_dispatch_failures": baseline_fields["dispatch_failures"],
+                "dispatch_failures": fields["dispatch_failures"],
+                "dispatch_failure_baseline": failure_baseline_scope,
+                "stable_readbacks": stable_readbacks,
+                "heartbeat_advances": healthy_heartbeat_advances,
+                "elapsed_seconds": max(0.0, now - started),
+            }
+        time.sleep(min(_WAIT_HINGE_POLL_SECONDS, deadline - now))
+
+
 def _execute_action(
     service: DeviceService,
     action: dict[str, Any],
     screenshots_dir: Path,
+    context: dict[str, Any] | None = None,
 ) -> tuple[Any, str | None]:
     kind = action["action"]
+    context = context if context is not None else {}
     if kind == "launch":
         return service.launch(action["bundle_id"], action["args"]), None
     if kind == "tap_element":
@@ -643,8 +873,43 @@ def _execute_action(
         return service.text(action["text"]), None
     if kind == "button":
         return service.button(action["name"]), None
+    if kind == "capture_hinge_baseline":
+        pending = context.get("hinge_baseline")
+        if pending and pending["applied"]:
+            raise ScenarioError("wait_hinge must consume the previous fold baseline before another baseline")
+        fields = _capture_hinge_baseline(service)
+        context["hinge_baseline"] = {
+            "position": action["position"],
+            "fields": fields,
+            "applied": False,
+        }
+        return {
+            "position": action["position"],
+            "current_angle": fields["current_angle"],
+            "pid": fields["pid"],
+            "service_id": fields["service_id"],
+            "dispatch_failures": fields["dispatch_failures"],
+        }, None
     if kind == "fold":
+        pending = context.get("hinge_baseline")
+        if pending:
+            if pending["applied"]:
+                raise ScenarioError("wait_hinge must consume the previous fold baseline before another fold")
+            if pending["position"] != action["position"]:
+                raise ScenarioError("pre-fold hinge baseline position does not match the fold action")
+            pending["applied"] = True
         return service.fold(action["position"]), None
+    if kind == "wait_hinge":
+        pending = context.get("hinge_baseline")
+        baseline = None
+        if pending:
+            if not pending["applied"]:
+                raise ScenarioError("pre-fold hinge baseline must be followed by its fold before wait_hinge")
+            if pending["position"] != action["position"]:
+                raise ScenarioError("pre-fold hinge baseline position does not match wait_hinge")
+            baseline = pending["fields"]
+            context.pop("hinge_baseline")
+        return _wait_hinge(service, action, baseline), None
     if kind == "terminate":
         return service.terminate(action["bundle_id"]), None
     if kind == "screenshot":
@@ -759,6 +1024,7 @@ def run_scenario(service: DeviceService, scenario_path: Path, output: Path) -> d
             report["scenario_sha256"] = None
         raise _finish_failure(service, output_dir, screenshots_dir, report, exc) from exc
 
+    action_context: dict[str, Any] = {}
     for index, action in enumerate(actions, start=1):
         started = time.monotonic()
         record: dict[str, Any] = {
@@ -772,7 +1038,7 @@ def run_scenario(service: DeviceService, scenario_path: Path, output: Path) -> d
         }
         report["steps"].append(record)
         try:
-            result, explicit_screenshot = _execute_action(service, action, screenshots_dir)
+            result, explicit_screenshot = _execute_action(service, action, screenshots_dir, action_context)
             if action["action"] != "screenshot":
                 record["result"] = _safe_result(result)
             screenshot_name = explicit_screenshot or f"step-{index:03}.png"

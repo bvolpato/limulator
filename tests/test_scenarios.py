@@ -101,6 +101,20 @@ class FakeService:
         return self._input("terminate", *args)
 
 
+class ScriptedHingeService(FakeService):
+    def __init__(self, responses: list[Any]) -> None:
+        super().__init__()
+        self.hinge_responses = responses
+        self.hinge_calls: list[float] = []
+
+    def hinge_status(self, timeout: float = 60) -> Any:
+        self.hinge_calls.append(timeout)
+        response = self.hinge_responses[min(len(self.hinge_calls) - 1, len(self.hinge_responses) - 1)]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class ScriptedTreeService(FakeService):
     def __init__(self, responses: list[Any]) -> None:
         super().__init__()
@@ -119,6 +133,248 @@ def _write_scenario(tmp_path: Path, value: Any) -> Path:
     path = tmp_path / "scenario.json"
     path.write_text(json.dumps(value, allow_nan=True), encoding="utf-8")
     return path
+
+
+def _hinge_status(
+    *, angle: float = 100, updated_at: float = 100, dispatch_failures: int = 0, **overrides: Any
+) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "enumerated": True,
+        "sweeping": False,
+        "pid": 42,
+        "service_id": 500,
+        "updated_at": updated_at,
+        "current_angle": angle,
+        "dispatch_failures": dispatch_failures,
+        "error": "",
+        "configuration": {"enabled": True, "angle": angle},
+    }
+    if "configuration" in overrides and isinstance(overrides["configuration"], dict):
+        status["configuration"].update(overrides.pop("configuration"))
+    status.update(overrides)
+    return status
+
+
+def _fake_scenario_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    clock = [0.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    return clock
+
+
+def _wait_hinge_action(position: str = "book", timeout: float = 30) -> dict[str, Any]:
+    return scenarios._validate_steps(
+        {"version": 1, "steps": [{"action": "wait_hinge", "position": position, "timeout": timeout}]}
+    )[0]
+
+
+@pytest.mark.parametrize(
+    ("step", "message"),
+    [
+        ({"action": "wait_hinge", "position": "half"}, "hinge position"),
+        ({"action": "wait_hinge", "position": "closed", "timeout": 0}, "hinge timeout"),
+        ({"action": "wait_hinge", "position": "open", "timeout": 121}, "hinge timeout"),
+    ],
+)
+def test_wait_hinge_rejects_unsupported_positions_and_unbounded_deadlines(step, message):
+    with pytest.raises(ValueError, match=message):
+        scenarios._validate_steps({"version": 1, "steps": [step]})
+
+
+def test_wait_hinge_requires_fresh_provider_heartbeats_and_stable_book_posture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_scenario_clock(monkeypatch)
+    baseline = scenarios._hinge_status_fields(
+        _hinge_status(angle=0, updated_at=99, dispatch_failures=1)
+    )
+    service = ScriptedHingeService(
+        [
+            None,
+            _hinge_status(angle=99, updated_at=100, enumerated=False, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=101, sweeping=1, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=101, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=102, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=102, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=103, dispatch_failures=1),
+        ]
+    )
+    screenshots = tmp_path / "screenshots"
+    screenshots.mkdir()
+
+    result = scenarios._wait_hinge(service, _wait_hinge_action(), baseline)
+
+    assert result["position"] == "book"
+    assert result["target_angle"] == 100
+    assert result["current_angle"] == 100
+    assert result["enumerated"] is True
+    assert result["pid"] == 42
+    assert result["baseline_dispatch_failures"] == 1
+    assert result["dispatch_failures"] == 1
+    assert result["dispatch_failure_baseline"] == "pre_fold"
+    assert result["heartbeat_advances"] >= 2
+    assert result["stable_readbacks"] >= 3
+    assert len(service.hinge_calls) == 7
+    assert all(0 < timeout <= 30 for timeout in service.hinge_calls)
+
+
+def test_native_hinge_status_uses_singular_preferences_envelope_and_integer_sweep_flag() -> None:
+    fields = scenarios._hinge_status_fields(
+        {
+            "enumerated": True,
+            "sweeping": 0,
+            "configuration": {"enabled": True, "angle": 0},
+            "pid": 73,
+            "service_id": 1786483795034113,
+            "dispatch_failures": 1,
+            "error": "",
+            "current_angle": 0,
+            "updated_at": 1794110328.796,
+        }
+    )
+
+    assert fields["sweeping"] is False
+    assert fields["pid"] == 73
+    assert fields["service_id"] == 1786483795034113
+    assert fields["dispatch_failures"] == 1
+
+
+def test_wait_hinge_rejects_a_stale_settled_status_without_a_fresh_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_scenario_clock(monkeypatch)
+    stale = _hinge_status(angle=100, updated_at=100)
+    service = ScriptedHingeService([stale])
+
+    with pytest.raises(ScenarioError, match="timed out waiting for a fresh settled hinge status"):
+        scenarios._wait_hinge(service, _wait_hinge_action(timeout=0.6))
+
+    assert len(service.hinge_calls) == 3
+
+
+def test_wait_hinge_does_not_reuse_sweep_heartbeats_as_settled_state_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_scenario_clock(monkeypatch)
+    service = ScriptedHingeService(
+        [
+            _hinge_status(angle=99, updated_at=100, sweeping=True),
+            _hinge_status(angle=99, updated_at=101, sweeping=True),
+            _hinge_status(angle=100, updated_at=102),
+        ]
+    )
+
+    with pytest.raises(ScenarioError, match="timed out waiting for a fresh settled hinge status"):
+        scenarios._wait_hinge(service, _wait_hinge_action(timeout=0.6))
+
+    assert len(service.hinge_calls) == 3
+
+
+def test_wait_hinge_resets_settled_heartbeat_evidence_after_missing_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_scenario_clock(monkeypatch)
+    monkeypatch.setattr(scenarios, "_HINGE_STABLE_READBACKS", 4)
+    service = ScriptedHingeService(
+        [
+            _hinge_status(angle=100, updated_at=100),
+            _hinge_status(angle=100, updated_at=101),
+            _hinge_status(angle=100, updated_at=102),
+            None,
+            _hinge_status(angle=100, updated_at=102),
+            _hinge_status(angle=100, updated_at=102),
+        ]
+    )
+
+    with pytest.raises(ScenarioError, match="timed out waiting for a fresh settled hinge status"):
+        scenarios._wait_hinge(service, _wait_hinge_action(timeout=2.5))
+
+    assert len(service.hinge_calls) > 6
+
+
+def test_wait_hinge_fails_if_cumulative_dispatch_failures_increase() -> None:
+    service = ScriptedHingeService(
+        [
+            _hinge_status(angle=100, updated_at=100, dispatch_failures=2),
+            _hinge_status(angle=100, updated_at=101, dispatch_failures=3),
+        ]
+    )
+
+    with pytest.raises(ScenarioError, match=r"dispatch_failures increased .*2 to 3"):
+        scenarios._wait_hinge(service, _wait_hinge_action(timeout=30))
+
+
+def test_pre_fold_baseline_detects_a_failure_before_the_first_posture_read(
+    tmp_path: Path,
+) -> None:
+    service = ScriptedHingeService(
+        [
+            _hinge_status(angle=0, updated_at=100, dispatch_failures=1),
+            _hinge_status(angle=100, updated_at=101, dispatch_failures=2),
+        ]
+    )
+    context: dict[str, Any] = {}
+    steps = scenarios._validate_steps(
+        {
+            "version": 1,
+            "steps": [
+                {"action": "capture_hinge_baseline", "position": "book"},
+                {"action": "fold", "position": "book"},
+                {"action": "wait_hinge", "position": "book", "timeout": 30},
+            ],
+        }
+    )
+
+    scenarios._execute_action(service, steps[0], tmp_path, context)
+    scenarios._execute_action(service, steps[1], tmp_path, context)
+    with pytest.raises(ScenarioError, match=r"dispatch_failures increased from the pre_fold baseline \(1 to 2\)"):
+        scenarios._execute_action(service, steps[2], tmp_path, context)
+
+    assert service.inputs == [("fold", ("book",))]
+
+
+@pytest.mark.parametrize(("changed",), [("pid",), ("service_id",)])
+def test_wait_hinge_rejects_provider_restart_even_if_failure_count_is_unchanged(changed: str) -> None:
+    baseline_status = _hinge_status(angle=0, updated_at=100, dispatch_failures=1)
+    baseline = scenarios._hinge_status_fields(baseline_status)
+    current = _hinge_status(angle=100, updated_at=101, dispatch_failures=1)
+    current[changed] += 1
+    service = ScriptedHingeService([current])
+
+    with pytest.raises(ScenarioError, match="hinge provider PID or service ID changed"):
+        scenarios._wait_hinge(service, _wait_hinge_action(), baseline)
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (_hinge_status(enumerated=2), "hinge enumerated flag"),
+        (_hinge_status(pid=0), "provider PID"),
+        (_hinge_status(service_id=0), "service ID"),
+        (_hinge_status(updated_at=float("nan")), "updated_at"),
+        (_hinge_status(sweeping=2), "hinge sweeping flag"),
+        (_hinge_status(configuration={"enabled": 2}), "configuration enabled flag"),
+    ],
+)
+def test_wait_hinge_rejects_malformed_provider_status(status, message):
+    service = ScriptedHingeService([status])
+
+    with pytest.raises(ScenarioError, match=message):
+        scenarios._wait_hinge(service, _wait_hinge_action(timeout=30))
+
+
+def test_pre_fold_baseline_fails_closed_when_provider_status_is_absent():
+    service = ScriptedHingeService([None])
+
+    with pytest.raises(ScenarioError, match="pre-fold hinge baseline: the provider status is absent"):
+        scenarios._capture_hinge_baseline(service)
+
+
+def test_pre_fold_baseline_requires_a_live_settled_provider():
+    service = ScriptedHingeService([_hinge_status(angle=99, sweeping=1)])
+
+    with pytest.raises(ScenarioError, match="pre-fold hinge baseline.*enumerated, settled"):
+        scenarios._capture_hinge_baseline(service)
 
 
 def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(

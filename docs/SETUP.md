@@ -169,3 +169,20 @@ Semantic taps only select visible accessibility elements. To reach a control bel
 The search deadline is checked between the existing bounded capture and swipe operations and before accepting a match. An in-flight capture or swipe can finish after that deadline, at which point the action fails. A missing target fails at the swipe limit or deadline and attempts the usual failure capture. Use a separate `tap_element` action after scrolling; use an upward scroll to return to the counter after visiting lower cards.
 
 The smoke scenario checks a specific counter value, native text input, navigation, and count persistence after relaunch. The Duo scenario checks the counter across cover, book, and open states. A passing host-side unit suite alone does not establish that either native scenario works; native results must come from a running guest.
+
+The Duo scenario waits for `display.posture` to settle before checking the app. `capture_hinge_baseline` records the healthy provider PID, service ID, and cumulative dispatch-failure count before a fold. `wait_hinge` is Duo-only and reads the pinned backboardd hinge-provider status. It requires the same provider epoch and failure count as the baseline, an enumerated provider, the requested configured and current angles, no active sweep or provider error, three consecutive healthy reads, and two advancing provider heartbeat timestamps while settled. It compares timestamps with earlier guest reads; it does not compare guest and host clocks. A standalone `wait_hinge` without a preceding baseline reports that its failure-count baseline covers only the wait window. The target reported by `display.orientation.fold_angle` is a configuration target and does not prove that the hinge finished moving.
+
+`wait_hinge` accepts `closed`, `book`, or `open` and a positive timeout of at most 120 seconds:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {"action": "capture_hinge_baseline", "position": "book"},
+    {"action": "fold", "position": "book"},
+    {"action": "wait_hinge", "position": "book", "timeout": 30}
+  ]
+}
+```
+
+The Duo scenario also reads CounterLab's UIKit point size and display scale in each posture, increments the counter through its visible accessibility control in all three postures, then returns to cover and checks that the count remains `3`. This deliberately exercises native semantic input. If inner-display input does not reach the app, the scenario fails at the counter assertion and cannot be treated as a posture pass.
