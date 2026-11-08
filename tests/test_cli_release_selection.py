@@ -141,6 +141,20 @@ def test_doctor_preserves_custom_release_base_while_selecting_locked_root(tmp_pa
     assert result["tools"]["firmware_release"] == (release_base / f"{pin['version']}-{pin['sha256']}")
 
 
+def test_empty_vsetup_release_uses_the_default_pinned_base(tmp_path, monkeypatch):
+    paths, _wrapper_marker, _release = _doctor_paths(tmp_path, monkeypatch)
+    monkeypatch.setenv("VSETUP_RELEASE", "")
+    monkeypatch.delenv("LIMULATOR_RELEASE_BASE", raising=False)
+    _stub_doctor_host_probes(monkeypatch)
+
+    result = cli.doctor(paths)
+
+    pin = json.loads((Path(ROOT) / "third_party.lock.json").read_text())["release"]
+    assert result["tools"]["firmware_release"] == (
+        paths.data / "releases/vphone" / f"{pin['version']}-{pin['sha256']}"
+    )
+
+
 @pytest.mark.parametrize("configured_base", ["relative release base", "~/tilde release base"])
 def test_doctor_reuses_root_selected_by_sourced_backend_environment(tmp_path, monkeypatch, configured_base):
     paths = Paths(tmp_path / "data")

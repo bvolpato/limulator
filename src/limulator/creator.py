@@ -88,7 +88,7 @@ def _firmware_cache(env: dict[str, str]) -> Path:
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
     xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
-    release_base = env.get("LIMULATOR_RELEASE_BASE") or env.get("VSETUP_RELEASE")
+    release_base = env.get("LIMULATOR_RELEASE_BASE") or env.get("VSETUP_RELEASE") or None
     release_directory = release_root(paths.data, release_base)
     release_base = str(release_directory.parent)
     env.setdefault("DARWIN_SDK_BUNDLE", str(xtool_config / "swiftpm/swift-sdks/darwin.artifactbundle"))
