@@ -102,6 +102,7 @@ function configureProfileTabs(profiles) {
     pip.classList.toggle("pip-lime", profile.state === "verified");
     pip.classList.toggle("pip-gray", profile.state === "research");
     drawDiagram(profile.diagram, profile.label);
+    setText("[data-command-research]", `${profile.label}: ${profile.validation || profile.badge}`);
     syncCommandProfile(profile);
   }
 

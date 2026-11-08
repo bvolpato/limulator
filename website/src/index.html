@@ -281,7 +281,7 @@
             <p class="eyebrow"><span class="section-index">05</span> The developer loop</p>
             <h2 id="start-title">Build. Run.<br /><em>Inspect what happened.</em></h2>
           </div>
-          <p class="section-deck">The CLI is the source of truth. Use the local console for hands-on inspection, or capture and exercise the guest directly from your shell.</p>
+          <p class="section-deck">The CLI is the source of truth. Use the local console for hands-on inspection, or capture and exercise the guest directly from your shell. <a class="start-doc-link" href="https://github.com/bvolpato/limulator/blob/main/docs/APP_WORKFLOW.md" target="_blank" rel="noreferrer">Read the detailed app workflow <span aria-hidden="true">↗</span></a></p>
         </div>
         <div class="start-layout">
           <div class="command-selector">
@@ -302,6 +302,11 @@ uv run limulator bootstrap all
 uv run limulator bootstrap xtool
 uv run limulator doctor</code></pre>
             <p class="terminal-caption" data-command-caption>Build the pinned Linux backend, install xtool from your Xcode SDK archive, then check local prerequisites.</p>
+            <aside class="terminal-research-note" role="note" aria-label="Research-only command examples">
+              <strong>Research only · native acceptance pending</strong>
+              <p data-command-research aria-live="polite">iPhone Duo: Restore and research guest installation are complete. Guest startup needs repair before native app validation can continue.</p>
+              <span>Guest command examples remain research only until this profile passes native acceptance.</span>
+            </aside>
             <div class="terminal-status"><span><i class="status-pip pip-lime"></i> Runs locally</span><span>Python 3.12 · Ubuntu-family host</span></div>
             <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
           </div>
