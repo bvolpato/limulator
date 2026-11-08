@@ -28,6 +28,7 @@ def device(tmp_path):
 def test_paths_use_home_and_backend_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("LIMULATOR_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("LIMULATOR_BACKEND", str(tmp_path / "backend"))
+    monkeypatch.delenv("LIMULATOR_PREFIX", raising=False)
     paths = Paths()
     assert paths.data == tmp_path / "home"
     assert paths.backend == tmp_path / "backend"
@@ -311,6 +312,7 @@ def test_resource_guard_rejects_low_memory_without_starting_workload(monkeypatch
 def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(
     device, monkeypatch, window, graphics_mode
 ):
+    monkeypatch.delenv("LIMULATOR_PREFIX", raising=False)
     # Run the real supervisor against a tiny QMP peer with a QEMU-named executable.
     # The fake scope launcher consumes no guest RAM and does not contact systemd.
     with tempfile.TemporaryDirectory(prefix="lim-life-") as temporary:
