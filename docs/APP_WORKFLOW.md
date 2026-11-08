@@ -29,7 +29,9 @@ uv run limulator devices
 
 The selected xtool wrapper keeps using its installed Swift toolchain and SDK when the guest data directory changes. `LIMULATOR_XTOOL_CONFIG` remains available for an explicit SDK configuration override. A new guest directory does not require another Swift or SDK installation.
 
-For repeated use, those three assignments can live in an ignored `.limulator/dev.env` file. Use `uv run --env-file .limulator/dev.env limulator ...` instead of exporting them in every terminal. Keep local paths, VM disks, SDKs, and app artifacts out of Git.
+Creating a new guest also uses the SDK to build the ECID-aware SSH ramdisk bootstrap. With shared tools and a separate guest data directory, set `LIMULATOR_XTOOL_CONFIG` to the shared installation's `xtool/config` directory. `DARWIN_SDK_BUNDLE` can select a bundle directly. Alternatively, `VPHONE_SSHRD_BOOTSTRAP` accepts a trusted prebuilt bootstrap; the backend validates its architecture and signed code before staging it.
+
+For repeated use, these assignments can live in an ignored `.limulator/dev.env` file. Use `uv run --env-file .limulator/dev.env limulator ...` instead of exporting them in every terminal. Keep local paths, VM disks, SDKs, and app artifacts out of Git.
 
 ## Select a graphics policy
 

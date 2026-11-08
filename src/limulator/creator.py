@@ -86,6 +86,8 @@ def _firmware_cache(env: dict[str, str]) -> Path:
 
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
+    xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
+    env.setdefault("DARWIN_SDK_BUNDLE", str(xtool_config / "swiftpm/swift-sdks/darwin.artifactbundle"))
     env["PATH"] = os.pathsep.join(
         (str(paths.prefix / "bin"), str(Path.home() / ".cargo/bin"), env.get("PATH", os.defpath))
     )
