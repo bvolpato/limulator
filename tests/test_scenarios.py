@@ -401,6 +401,33 @@ def _ax_target(*, identifier="target", x=50, y=75, visible=True):
     }
 
 
+@pytest.mark.parametrize("visible", [True, 1])
+def test_scroll_accepts_native_ax_visibility_values(tmp_path, monkeypatch, visible):
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
+    service = FakeService(trees=[_ax_target(visible=visible)])
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "scroll_to_element", "identifier": "target"}]},
+    )
+    report = run_scenario(service, path, tmp_path / "native-visible")
+
+    assert service.inputs == []
+    assert report["steps"][0]["result"]["swipes"] == 0
+    assert report["steps"][0]["result"]["activation_point"] == {
+        "x": 50,
+        "y": 75,
+        "units": "points",
+    }
+
+
+@pytest.mark.parametrize("visible", [False, 0, 2, 1.0, "true", [], {}, None])
+def test_scroll_rejects_noncanonical_ax_visibility_values(visible):
+    target, reason = scenarios._scroll_target(_ax_target(visible=visible), "target", width=100, height=150)
+
+    assert target is None
+    assert reason == "target is not visible"
+
+
 def test_scroll_reveals_offscreen_target_then_keeps_tap_semantic(tmp_path, monkeypatch):
     monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
     service = FakeService(trees=[_ax_target(visible=False), _ax_target()])

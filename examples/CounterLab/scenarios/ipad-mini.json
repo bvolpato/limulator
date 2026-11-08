@@ -1,6 +1,7 @@
 {
   "version": 1,
   "steps": [
+    {"action": "terminate", "bundle_id": "com.bvolpato.limulator.counterlab"},
     {"action": "launch", "bundle_id": "com.bvolpato.limulator.counterlab"},
     {"action": "wait_text", "text": "Counter Lab", "timeout": 120},
     {"action": "scroll_to_element", "identifier": "counterlab.device.os"},

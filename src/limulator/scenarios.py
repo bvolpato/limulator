@@ -491,6 +491,11 @@ def _finish_failure(
     return ScenarioError(f"{report['failure']['error']} (report: {report_path})", report_path=report_path)
 
 
+def _ax_element_is_visible(value: Any) -> bool:
+    """Accept Boolean visibility and vphoned's numeric 1/0 representation."""
+    return value is True or (type(value) is int and value == 1)
+
+
 def _scroll_target(tree: Any, identifier: str, width: float, height: float) -> tuple[dict | None, str]:
     if isinstance(tree, dict) and tree.get("error"):
         raise ScenarioError(f"Guest accessibility query failed: {tree['error']}")
@@ -504,7 +509,7 @@ def _scroll_target(tree: Any, identifier: str, width: float, height: float) -> t
     for element in tree["elements"]:
         if not isinstance(element, dict):
             raise ScenarioError("Guest accessibility query returned a non-object element")
-        if element.get("identifier") == identifier and element.get("visible") is True:
+        if element.get("identifier") == identifier and _ax_element_is_visible(element.get("visible")):
             matches.append(element)
     if len(matches) > 1:
         raise ScenarioError(f"Accessibility identifier is ambiguous: {identifier!r}")
