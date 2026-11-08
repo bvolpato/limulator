@@ -44,12 +44,13 @@ def test_create_profile_resolves_model_os_and_scale(monkeypatch, tmp_path):
     assert calls[0][1:] == ("mini", "iPad16,1", "27.0.1", 43, 2)
 
 
-def test_create_accepts_explicit_graphics_mode(monkeypatch, tmp_path):
+@pytest.mark.parametrize("mode", ["compatible", "strict", "diagnostic"])
+def test_create_accepts_explicit_graphics_mode(monkeypatch, tmp_path, mode):
     calls = []
     monkeypatch.setattr("limulator.creator.create_device", lambda *args, **kwargs: calls.append(kwargs) or {})
 
-    assert cli.main(["--data", str(tmp_path), "create", "--graphics-mode", "diagnostic"]) == 0
-    assert calls[0]["graphics_mode"] == "diagnostic"
+    assert cli.main(["--data", str(tmp_path), "create", "--graphics-mode", mode]) == 0
+    assert calls[0]["graphics_mode"] == mode
 
 
 def test_start_passes_explicit_graphics_mode(monkeypatch, tmp_path):

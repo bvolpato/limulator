@@ -165,8 +165,8 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("devices", help="list registered guests")
     commands.add_parser("profiles", help="list available iPhone, iPad, and Duo profiles")
     graphics_help = (
-        "strict fails on unsupported vGPU answers; diagnostic records them for inventory. "
-        "Strict is not full Metal equivalence."
+        "compatible uses Reims's normal policy; strict rejects more differences; diagnostic enables a "
+        "run-owned census. No mode establishes full Metal equivalence."
     )
     create = commands.add_parser("create", help="create a local iOS guest from Apple firmware")
     create.add_argument("--profile", help="device profile ID (default: iphone-duo)")

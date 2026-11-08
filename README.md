@@ -10,6 +10,8 @@ The selected backend is [vphone-linux](https://github.com/YahiaAngelo/vphone-lin
 
 Limulator keeps that backend as a separate source dependency. [The lock file](third_party.lock.json) pins complete commits in our dependency forks, rather than applying a local patch series during installation. [Upstream contributions](docs/UPSTREAM.md) records the ownership of each change, its pull request, and the process for returning to upstream revisions. Limulator owns the build workflow, device management, console, and acceptance checks.
 
+New guest sessions use Reims vGPU's normal compatible policy by default. Strict checks and census-backed diagnostic mode are available as explicit choices; none establishes equivalence with a physical Apple GPU.
+
 For the normal development loop, use [Build, deploy, and test apps](docs/APP_WORKFLOW.md). It reuses an existing guest and separates app updates from the one-time firmware and tool setup. See [the setup guide](docs/SETUP.md) for installation, and [the research](docs/RESEARCH.md) and [architecture](docs/ARCHITECTURE.md) for the decision, acceptance criteria, and fidelity limits.
 
 ## Development

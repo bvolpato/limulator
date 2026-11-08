@@ -6,8 +6,8 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-GRAPHICS_MODES = ("strict", "diagnostic")
-DEFAULT_GRAPHICS_MODE = "strict"
+GRAPHICS_MODES = ("compatible", "strict", "diagnostic")
+DEFAULT_GRAPHICS_MODE = "compatible"
 GRAPHICS_MODE_ENV = "LIMULATOR_GRAPHICS_MODE"
 
 
@@ -21,7 +21,7 @@ def select_graphics_mode(value: str | None) -> tuple[str, bool]:
     if selected is None:
         return DEFAULT_GRAPHICS_MODE, False
     if selected not in GRAPHICS_MODES:
-        choices = " or ".join(GRAPHICS_MODES)
+        choices = ", ".join(GRAPHICS_MODES[:-1]) + f", or {GRAPHICS_MODES[-1]}"
         raise ValueError(f"graphics mode must be {choices}; got {selected!r}")
     return selected, explicit
 
@@ -31,7 +31,12 @@ def apply_graphics_environment(env: dict[str, str], mode: str, census_dir: Path)
     if mode not in GRAPHICS_MODES:
         raise ValueError(f"unsupported graphics mode: {mode!r}")
     env["REIMS_VGPU_STRICT"] = "1" if mode == "strict" else "0"
-    env["REIMS_VGPU_CENSUS_DIR"] = "" if mode == "strict" else os.fspath(census_dir)
+    if mode == "diagnostic":
+        env["REIMS_VGPU_CENSUS_DIR"] = os.fspath(census_dir)
+    elif mode == "strict":
+        env["REIMS_VGPU_CENSUS_DIR"] = ""
+    else:
+        env.pop("REIMS_VGPU_CENSUS_DIR", None)
 
 
 def graphics_policy_metadata(mode: str, env: Mapping[str, str]) -> dict[str, object]:

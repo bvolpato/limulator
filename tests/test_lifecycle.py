@@ -49,6 +49,13 @@ def test_graphics_modes_override_inherited_strict_and_census_flags(tmp_path):
     assert strict["REIMS_VGPU_EXACT"] == "batch_order"
     assert strict["REIMS_VGPU_DIRTY_PAGE_TRACKING"] == "0"
 
+    compatible = dict(inherited)
+    lifecycle.apply_graphics_environment(compatible, "compatible", tmp_path / "compatible-census")
+    assert compatible["REIMS_VGPU_STRICT"] == "0"
+    assert "REIMS_VGPU_CENSUS_DIR" not in compatible
+    assert compatible["REIMS_VGPU_EXACT"] == "batch_order"
+    assert compatible["REIMS_VGPU_DIRTY_PAGE_TRACKING"] == "0"
+
     diagnostic = dict(inherited)
     census = tmp_path / "diagnostic-census"
     lifecycle.apply_graphics_environment(diagnostic, "diagnostic", census)
@@ -60,13 +67,16 @@ def test_graphics_modes_override_inherited_strict_and_census_flags(tmp_path):
 
 def test_graphics_mode_environment_selects_a_new_launch_mode(monkeypatch):
     monkeypatch.delenv("LIMULATOR_GRAPHICS_MODE", raising=False)
-    assert lifecycle.select_graphics_mode(None) == ("strict", False)
+    assert lifecycle.select_graphics_mode(None) == ("compatible", False)
+
+    monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "compatible")
+    assert lifecycle.select_graphics_mode(None) == ("compatible", True)
 
     monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "diagnostic")
     assert lifecycle.select_graphics_mode(None) == ("diagnostic", True)
 
     monkeypatch.setenv("LIMULATOR_GRAPHICS_MODE", "metal")
-    with pytest.raises(ValueError, match="graphics mode must be strict or diagnostic"):
+    with pytest.raises(ValueError, match="graphics mode must be compatible, strict, or diagnostic"):
         lifecycle.select_graphics_mode(None)
 
 
@@ -297,7 +307,7 @@ def test_resource_guard_rejects_low_memory_without_starting_workload(monkeypatch
 
 
 @pytest.mark.parametrize("window", [False, True])
-@pytest.mark.parametrize("graphics_mode", ["strict", "diagnostic"])
+@pytest.mark.parametrize("graphics_mode", ["compatible", "strict", "diagnostic"])
 def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(
     device, monkeypatch, window, graphics_mode
 ):
@@ -382,9 +392,12 @@ server.close()
                 f"{runtime._metadata()['run_dir']}/window.sock"
             )
             assert actual_env["REIMS_VGPU_STRICT"] == ("1" if graphics_mode == "strict" else "0")
-            assert actual_env["REIMS_VGPU_CENSUS_DIR"] == (
-                "" if graphics_mode == "strict" else f"{runtime._metadata()['run_dir']}/census"
-            )
+            if graphics_mode == "compatible":
+                assert actual_env["REIMS_VGPU_CENSUS_DIR"] is None
+            else:
+                assert actual_env["REIMS_VGPU_CENSUS_DIR"] == (
+                    "" if graphics_mode == "strict" else f"{runtime._metadata()['run_dir']}/census"
+                )
             assert actual_env["REIMS_VGPU_EXACT"] == "pipeline_waits"
             assert runtime.status()["graphics_policy"] == {
                 "mode": graphics_mode,

@@ -184,7 +184,7 @@ def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(
         assert screenshot["identity"] == "200x300:0"
 
 
-@pytest.mark.parametrize("mode", ["strict", "diagnostic", "unknown"])
+@pytest.mark.parametrize("mode", ["compatible", "strict", "diagnostic", "unknown"])
 def test_report_keeps_recorded_graphics_policy_on_action_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:

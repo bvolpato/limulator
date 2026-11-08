@@ -266,6 +266,21 @@ def test_explicit_graphics_mode_is_passed_to_new_creation(catalog, monkeypatch):
     assert seen[0][1]["graphics_mode"] == "diagnostic"
 
 
+def test_new_creation_defaults_to_compatible_graphics_mode(catalog, monkeypatch):
+    monkeypatch.delenv("LIMULATOR_GRAPHICS_MODE", raising=False)
+    seen = []
+
+    def create(_paths, _candidate, _profile, _pairing, *, graphics_mode=creator.DEFAULT_GRAPHICS_MODE):
+        seen.append(graphics_mode)
+        return {"state": "created"}
+
+    monkeypatch.setattr(creator, "_create_locked", create)
+    result = creator.create_device(catalog, "phone", "iPhone17,3", "27.0.1", 41, 3)
+
+    assert result["state"] == "created"
+    assert seen == ["compatible"]
+
+
 def test_create_refuses_to_change_registered_graphics_mode(catalog):
     device = _registered_device(catalog, "phone", "iphone-duo", 41)
     runtime_path = catalog.runs / device.name / "runtime.json"
@@ -313,7 +328,15 @@ def test_incomplete_creation_can_select_a_new_graphics_mode(
     creator._atomic_json(candidate.vm_path / ".limulator-create.json", receipt)
     seen = []
 
-    def create(_paths, _candidate, _profile, _pairing, *, fresh_disk=False, graphics_mode="strict"):
+    def create(
+        _paths,
+        _candidate,
+        _profile,
+        _pairing,
+        *,
+        fresh_disk=False,
+        graphics_mode=creator.DEFAULT_GRAPHICS_MODE,
+    ):
         seen.append((fresh_disk, graphics_mode))
         return {"state": "created"}
 

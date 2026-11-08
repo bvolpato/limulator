@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import _creation_cleanup
 from .graphics import (
+    DEFAULT_GRAPHICS_MODE,
     apply_graphics_environment,
     graphics_policy_metadata,
     recorded_graphics_mode,
@@ -1302,7 +1303,7 @@ def create_device(
             if fresh_disk:
                 _fresh_disk_allowed(paths, candidate, old_receipt)
             options = {"fresh_disk": True} if fresh_disk else {}
-            if selected_mode != "strict":
+            if selected_mode != DEFAULT_GRAPHICS_MODE:
                 options["graphics_mode"] = selected_mode
             return _create_locked(paths, candidate, profile, pairing, **options) | {"cid": candidate.cid}
         finally:
@@ -1316,7 +1317,7 @@ def _create_locked(
     pairing: dict,
     *,
     fresh_disk: bool = False,
-    graphics_mode: str = "strict",
+    graphics_mode: str = DEFAULT_GRAPHICS_MODE,
 ) -> dict:
     _resource_guard()
     env = _native_env(paths)
@@ -1353,7 +1354,7 @@ def _pipeline(
     env: dict[str, str],
     *,
     fresh_disk: bool = False,
-    graphics_mode: str = "strict",
+    graphics_mode: str = DEFAULT_GRAPHICS_MODE,
 ) -> dict:
     vm = candidate.vm_path
     _normalize_backend_controls(env)
