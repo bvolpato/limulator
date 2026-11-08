@@ -210,13 +210,16 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
                 raise ValueError(f"step {index} button name must be one of {', '.join(sorted(_BUTTONS))}")
             call = {"name": name}
         elif action == "fold":
-            required, optional = {"position"}, set()
+            required, optional = {"position"}, {"timeout"}
             position = _string(step.get("position"), f"step {index} fold position", maximum=16)
             if position not in _FOLD_POSITIONS:
                 raise ValueError(
                     f"step {index} fold position must be one of {', '.join(sorted(_FOLD_POSITIONS))}"
                 )
-            call = {"position": position}
+            timeout = _number(step.get("timeout", 30), f"step {index} timeout")
+            if not 0 < timeout <= 120:
+                raise ValueError(f"step {index} fold timeout must be greater than 0 and at most 120 seconds")
+            call = {"position": position, "timeout": timeout}
         elif action == "capture_hinge_baseline":
             required, optional = {"position"}, set()
             position = _string(step.get("position"), f"step {index} hinge position", maximum=16)
@@ -891,14 +894,27 @@ def _execute_action(
             "dispatch_failures": fields["dispatch_failures"],
         }, None
     if kind == "fold":
+        if not service.supports_fold:
+            return service.fold(action["position"]), None
         pending = context.get("hinge_baseline")
+        baseline = None
         if pending:
             if pending["applied"]:
                 raise ScenarioError("wait_hinge must consume the previous fold baseline before another fold")
             if pending["position"] != action["position"]:
                 raise ScenarioError("pre-fold hinge baseline position does not match the fold action")
             pending["applied"] = True
-        return service.fold(action["position"]), None
+            baseline = pending["fields"]
+        else:
+            baseline = _capture_hinge_baseline(service)
+        result = service.fold(action["position"])
+        settlement = _wait_hinge(
+            service,
+            {"position": action["position"], "timeout": action["timeout"]},
+            baseline,
+        )
+        context.pop("hinge_baseline", None)
+        return {"fold": result, "hinge_settled": settlement}, None
     if kind == "wait_hinge":
         pending = context.get("hinge_baseline")
         baseline = None

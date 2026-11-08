@@ -144,6 +144,10 @@ Screenshot-coordinate input on the open display changed the count from `0` to `1
 
 These observations used backend `363c82a`, CLI `0b896ef`, and QEMU `fa07541`. The newer toolbar revision fixes cold Fold discovery separately and has regression and fork CI validation. The full Duo scenario has not passed, clean creation remains unaccepted, and inner-display geometry and semantic input require a shared guest-side fix before claiming complete Duo support.
 
+A later isolated-clone trial used only the FoldDisplay backports from merged upstream [CLI #788](https://github.com/Lakr233/vphone-cli/pull/788) and [#799](https://github.com/Lakr233/vphone-cli/pull/799), built at [fork commit `ec2cbb1`](https://github.com/bvolpato/vphone-cli/commit/ec2cbb1060b0504fbccc44d58d04521c1dfef221). After a cold boot, the inner CADisplay reported built-in type `0` and point scale `3`, replacing virtual type `3` and scale `1`. CounterLab still rendered the real 951 by 669 point layout at 3x, and the cover counter check passed. The update changed only the FoldDisplay library, and the root filesystem returned to read-only after reboot.
+
+Those metadata corrections did not resolve inner semantic input. In stable book posture, Add one's accessibility tap returned `tapped: true`; a later independent AX read still showed count `1`. The daemon continued reporting cover geometry of 678 by 466 points. The full scenario also exposed a separate transition issue: hinge settlement can precede a responsive SpringBoard orientation read. Waiting for fresh hinge evidence and allowing a bounded post-fold orientation read then passed a native closed-to-book capture scenario in 27.70 seconds. That is capture validation, not an input or performance pass. This trial does not advance the default CLI pin or establish complete Duo support.
+
 ## Shortest path for each change
 
 | What changed | What to run |

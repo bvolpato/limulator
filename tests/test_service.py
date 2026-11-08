@@ -60,6 +60,43 @@ class Runtime:
         yield self.peer
 
 
+def _orientation_runtime(clock: list[float], *, ready_after: float) -> Runtime:
+    runtime = Runtime()
+    runtime.clock = clock
+    runtime.ready_after = ready_after
+    runtime.fold_started = None
+    runtime.guest_timeouts = []
+    runtime.rpc_calls = []
+
+    class DelayedGuest:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def rpc(self, method, params=None):
+            runtime.rpc_calls.append((self.timeout, method, params))
+            if method == "display.posture":
+                runtime.fold_started = clock[0]
+                runtime.client.angle = 100
+                return {"position": params["position"]}
+            if method == "display.orientation":
+                if runtime.fold_started is None:
+                    return {"degrees": 0, "fold_angle": 0}
+                wait = max(0.0, runtime.fold_started + ready_after - clock[0])
+                if wait > self.timeout:
+                    clock[0] += self.timeout
+                    raise ProtocolError("orientation read timed out")
+                clock[0] += wait
+                return {"degrees": 90, "fold_angle": 100}
+            return {"sent": True}
+
+    def guest(timeout=60):
+        runtime.guest_timeouts.append(timeout)
+        return DelayedGuest(timeout)
+
+    runtime.guest = guest
+    return runtime
+
+
 def _ppm_payload(rows, *, row_padding=b""):
     height = len(rows)
     width = len(rows[0])
@@ -89,6 +126,62 @@ def test_folded_frame_rotation_and_tap_use_the_same_physical_geometry():
         assert image.getpixel((5, 0)) == (255, 0, 0)
     service.tap(5, 0, frame.identity)
     assert runtime.peer.calls == [(0, 0, 4, 6)]
+
+
+def test_post_fold_orientation_gets_a_larger_bounded_read_without_stale_frame_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.5]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    runtime = _orientation_runtime(clock, ready_after=12)
+    service = DeviceService(runtime)
+
+    cover = service.capture()
+    assert (cover.width, cover.height, cover.rotation) == (4, 6, 0)
+
+    service.fold("book")
+    with pytest.raises(DeviceError, match="display changed"):
+        service.tap(1, 1, cover.identity)
+    assert runtime.peer.calls == []
+
+    folded = service.capture()
+
+    assert (folded.width, folded.height, folded.rotation) == (6, 4, 90)
+    assert runtime.clock[0] == 12.5
+    assert [call[:2] for call in runtime.rpc_calls if call[1] == "display.orientation"] == [
+        (30, "display.orientation"),
+    ]
+    service.tap(5, 0, folded.identity)
+    assert runtime.peer.calls == [(0, 0, 4, 6)]
+
+    clock[0] += 2
+    service.capture()
+    assert [call[:2] for call in runtime.rpc_calls if call[1] == "display.orientation"][-1] == (
+        2,
+        "display.orientation",
+    )
+
+
+def test_post_fold_orientation_timeout_never_uses_cached_orientation_or_old_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1.5]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    runtime = _orientation_runtime(clock, ready_after=40)
+    service = DeviceService(runtime)
+    cover = service.capture()
+    service.fold("book")
+
+    with pytest.raises(DeviceError, match="Waiting for the guest to confirm its new display orientation"):
+        service.capture()
+
+    assert runtime.rpc_calls[-1][:2] == (30, "display.orientation")
+    assert service._needs_orientation is True
+    assert service._orientation == {"degrees": 0, "fold_angle": 0}
+    assert service._frame is None
+    with pytest.raises(DeviceError, match="display changed"):
+        service.tap(1, 1, cover.identity)
+    assert runtime.peer.calls == []
 
 
 def test_capture_compresses_raw_guest_pixels_to_png_outside_qemu():

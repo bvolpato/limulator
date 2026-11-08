@@ -193,15 +193,19 @@ class DeviceService:
 
     def _rotation(self) -> int:
         now = time.monotonic()
-        if now - self._orientation_at > 1:
+        if self._needs_orientation or now - self._orientation_at > 1:
+            needs_orientation = self._needs_orientation
             try:
-                self._orientation = self.runtime.guest(timeout=2).rpc("display.orientation")
+                timeout = 30 if needs_orientation else 2
+                self._orientation = self.runtime.guest(timeout=timeout).rpc("display.orientation")
                 self._needs_orientation = False
             except (OSError, RuntimeError):
-                if self._needs_orientation:
+                if needs_orientation:
                     raise DeviceError(
                         "Waiting for the guest to confirm its new display orientation"
                     ) from None
+            else:
+                now = time.monotonic()
             self._orientation_at = now
         if (self._orientation.get("fold_angle") or 0) >= 90:
             return 90

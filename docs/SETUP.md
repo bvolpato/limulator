@@ -170,17 +170,18 @@ The search deadline is checked between the existing bounded capture and swipe op
 
 The smoke scenario checks a specific counter value, native text input, navigation, and count persistence after relaunch. The Duo scenario checks the counter across cover, book, and open states. A passing host-side unit suite alone does not establish that either native scenario works; native results must come from a running guest.
 
-The Duo scenario waits for `display.posture` to settle before checking the app. `capture_hinge_baseline` records the healthy provider PID, service ID, and cumulative dispatch-failure count before a fold. `wait_hinge` is Duo-only and reads the pinned backboardd hinge-provider status. It requires the same provider epoch and failure count as the baseline, an enumerated provider, the requested configured and current angles, no active sweep or provider error, three consecutive healthy reads, and two advancing provider heartbeat timestamps while settled. It compares timestamps with earlier guest reads; it does not compare guest and host clocks. A standalone `wait_hinge` without a preceding baseline reports that its failure-count baseline covers only the wait window. The target reported by `display.orientation.fold_angle` is a configuration target and does not prove that the hinge finished moving.
+On an iPhone Duo, the scenario `fold` action captures a healthy provider PID, service ID, and cumulative dispatch-failure baseline before it changes posture. An earlier `capture_hinge_baseline` action can supply that baseline; otherwise `fold` reads one automatically. It sends the posture request and waits for the hinge to settle before returning. The scenario runner captures the PNG after the action returns, so its orientation read happens after hinge settlement. `fold` accepts an optional positive settlement timeout up to 120 seconds and defaults to 30. The subsequent fresh orientation read has a separate 30-second budget; ordinary orientation refreshes retain their 2-second budget. If a post-fold read fails, the service rejects stale frames rather than mapping input through the previous posture.
 
-`wait_hinge` accepts `closed`, `book`, or `open` and a positive timeout of at most 120 seconds:
+`wait_hinge` remains available as a standalone read-only action. It requires an enumerated provider with the requested configured and current angles, no active sweep or provider error, three consecutive healthy reads, and two advancing provider heartbeat timestamps while settled. A standalone wait uses its first status read as its failure-count baseline and reports that scope as `wait_window`. The scenario `fold` result reports the separate pre-fold baseline and settled hinge evidence. Both compare timestamps with earlier guest reads; neither compares guest and host clocks. The target reported by `display.orientation.fold_angle` is a configuration target and does not prove that the hinge finished moving.
+
+Use a version-1 scenario to capture a stable PNG after a posture change:
 
 ```json
 {
   "version": 1,
   "steps": [
     {"action": "capture_hinge_baseline", "position": "book"},
-    {"action": "fold", "position": "book"},
-    {"action": "wait_hinge", "position": "book", "timeout": 30}
+    {"action": "fold", "position": "book", "timeout": 30}
   ]
 }
 ```

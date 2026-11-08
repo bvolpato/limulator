@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +14,7 @@ import pytest
 from limulator import scenarios
 from limulator.protocols import ProtocolError
 from limulator.scenarios import ScenarioError, run_scenario
+from limulator.service import DeviceService
 
 
 class FakeFrame:
@@ -21,6 +25,8 @@ class FakeFrame:
 
 
 class FakeService:
+    supports_fold = False
+
     def __init__(
         self,
         *,
@@ -102,6 +108,8 @@ class FakeService:
 
 
 class ScriptedHingeService(FakeService):
+    supports_fold = True
+
     def __init__(self, responses: list[Any]) -> None:
         super().__init__()
         self.hinge_responses = responses
@@ -168,6 +176,112 @@ def _wait_hinge_action(position: str = "book", timeout: float = 30) -> dict[str,
     )[0]
 
 
+class DelayedOrientationPeer:
+    def __init__(self, runtime: "DelayedOrientationRuntime") -> None:
+        self.runtime = runtime
+        self.calls: list[tuple[Any, ...]] = []
+
+    def screenshot(self, path: Path, *, image_format: str = "png") -> None:
+        self.runtime.events.append("screenshot")
+        if image_format != "ppm":
+            raise AssertionError("device capture must request a raw PPM frame")
+        path.write_bytes(b"P6\n4 6\n255\n" + bytes((20, 40, 60)) * (4 * 6))
+
+    def tap(self, *args: Any) -> None:
+        self.calls.append(args)
+
+
+class DelayedOrientationGuest:
+    def __init__(self, runtime: "DelayedOrientationRuntime", timeout: float) -> None:
+        self.runtime = runtime
+        self.timeout = timeout
+
+    def rpc(self, method: str, params: dict | None = None) -> dict:
+        self.runtime.rpc_calls.append((self.timeout, method, params))
+        if method == "display.posture":
+            self.runtime.events.append("fold")
+            self.runtime.fold_started = self.runtime.clock[0]
+            self.runtime.target_angle = {"closed": 0, "book": 100, "open": 180}[params["position"]]
+            return {"position": params["position"]}
+        if method == "settings.get":
+            self.runtime.events.append("hinge")
+            return {
+                "domain": "com.apple.backboardd",
+                "user": "mobile",
+                "key": "VPhoneHingeStatus",
+                "exists": True,
+                "value": self.runtime.hinge_status(),
+                "type": "plist",
+            }
+        if method == "display.orientation":
+            self.runtime.events.append("orientation")
+            if self.runtime.fold_started is not None:
+                wait = max(
+                    0,
+                    self.runtime.fold_started
+                    + self.runtime.orientation_ready_after
+                    - self.runtime.clock[0],
+                )
+                if wait > self.timeout:
+                    self.runtime.clock[0] += self.timeout
+                    raise ProtocolError("orientation read timed out")
+                self.runtime.clock[0] += wait
+            return {"degrees": 90, "fold_angle": 100}
+        return {"sent": True}
+
+
+class DelayedOrientationRuntime:
+    def __init__(self, clock: list[float], *, orientation_ready_after: float) -> None:
+        self.clock = clock
+        self.orientation_ready_after = orientation_ready_after
+        self.fold_started: float | None = None
+        self.target_angle = 0
+        self.events: list[str] = []
+        self.rpc_calls: list[tuple[float, str, dict | None]] = []
+        self.device = SimpleNamespace(
+            name="duo", model="iPhone19,4", os_version="27.1", width=1398, height=2034, scale=3, cid=46
+        )
+        self.peer = DelayedOrientationPeer(self)
+
+    def guest(self, timeout: float = 60) -> DelayedOrientationGuest:
+        return DelayedOrientationGuest(self, timeout)
+
+    @contextmanager
+    def qmp(self):
+        yield self.peer
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "state": "running",
+            "device": {},
+            "graphics_policy": {"mode": "unknown", "reims_vgpu_exact": {"known": False}},
+        }
+
+    def hinge_status(self) -> dict[str, Any]:
+        if self.fold_started is None:
+            angle, sweeping, updated_at = 0, 0, 100.0
+        else:
+            elapsed = self.clock[0] - self.fold_started
+            sweeping = int(elapsed < 0.5)
+            angle = 0 if sweeping else self.target_angle
+            updated_at = (
+                100.0
+                if elapsed < 0.5
+                else 101.0 + math.floor((elapsed - 0.5) / 2)
+            )
+        return {
+            "enumerated": True,
+            "sweeping": sweeping,
+            "pid": 73,
+            "service_id": 1786483795034113,
+            "updated_at": updated_at,
+            "dispatch_failures": 1,
+            "error": "",
+            "current_angle": angle,
+            "configuration": {"enabled": True, "angle": self.target_angle},
+        }
+
+
 @pytest.mark.parametrize(
     ("step", "message"),
     [
@@ -179,6 +293,57 @@ def _wait_hinge_action(position: str = "book", timeout: float = 30) -> dict[str,
 def test_wait_hinge_rejects_unsupported_positions_and_unbounded_deadlines(step, message):
     with pytest.raises(ValueError, match=message):
         scenarios._validate_steps({"version": 1, "steps": [step]})
+
+
+@pytest.mark.parametrize("timeout", [0, 121])
+def test_scenario_fold_bounds_its_settlement_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="fold timeout"):
+        scenarios._validate_steps(
+            {"version": 1, "steps": [{"action": "fold", "position": "book", "timeout": timeout}]}
+        )
+
+
+def test_fold_scenario_waits_for_settlement_before_automatic_png_and_rotated_taps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [10.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    immediate_runtime = DelayedOrientationRuntime(clock, orientation_ready_after=5.5)
+    immediate_service = DeviceService(immediate_runtime)
+    immediate_service.fold("book")
+    immediate_frame = immediate_service.capture()
+    assert (immediate_frame.width, immediate_frame.height, immediate_frame.rotation) == (6, 4, 90)
+    assert immediate_runtime.rpc_calls[-1][:2] == (30, "display.orientation")
+
+    clock[0] = 10.0
+    runtime = DelayedOrientationRuntime(clock, orientation_ready_after=5.5)
+    service = DeviceService(runtime)
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "fold", "position": "book", "timeout": 30}]},
+    )
+
+    report = run_scenario(service, path, tmp_path / "settled-fold")
+
+    assert report["status"] == "passed"
+    fold_result = report["steps"][0]["result"]
+    settlement = fold_result["hinge_settled"]
+    assert settlement["current_angle"] == 100
+    assert settlement["heartbeat_advances"] >= 2
+    assert settlement["dispatch_failure_baseline"] == "pre_fold"
+    assert runtime.events.index("fold") < runtime.events.index("screenshot")
+    assert runtime.events.index("screenshot") < runtime.events.index("orientation")
+    assert runtime.clock[0] >= 15.5
+    assert runtime.rpc_calls[-1][:2] == (30, "display.orientation")
+    assert report["steps"][0]["screenshots"][0]["width"] == 6
+    assert report["steps"][0]["screenshots"][0]["height"] == 4
+    assert service._frame is not None
+    assert (service._frame.width, service._frame.height, service._frame.rotation) == (6, 4, 90)
+
+    service.tap(5, 0, service._frame.identity)
+    assert runtime.peer.calls == [(0, 0, 4, 6)]
 
 
 def test_wait_hinge_requires_fresh_provider_heartbeats_and_stable_book_posture(
@@ -320,15 +485,13 @@ def test_pre_fold_baseline_detects_a_failure_before_the_first_posture_read(
             "steps": [
                 {"action": "capture_hinge_baseline", "position": "book"},
                 {"action": "fold", "position": "book"},
-                {"action": "wait_hinge", "position": "book", "timeout": 30},
             ],
         }
     )
 
     scenarios._execute_action(service, steps[0], tmp_path, context)
-    scenarios._execute_action(service, steps[1], tmp_path, context)
     with pytest.raises(ScenarioError, match=r"dispatch_failures increased from the pre_fold baseline \(1 to 2\)"):
-        scenarios._execute_action(service, steps[2], tmp_path, context)
+        scenarios._execute_action(service, steps[1], tmp_path, context)
 
     assert service.inputs == [("fold", ("book",))]
 
