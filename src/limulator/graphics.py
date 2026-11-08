@@ -33,10 +33,9 @@ def apply_graphics_environment(env: dict[str, str], mode: str, census_dir: Path)
     env["REIMS_VGPU_STRICT"] = "1" if mode == "strict" else "0"
     if mode == "diagnostic":
         env["REIMS_VGPU_CENSUS_DIR"] = os.fspath(census_dir)
-    elif mode == "strict":
-        env["REIMS_VGPU_CENSUS_DIR"] = ""
     else:
-        env.pop("REIMS_VGPU_CENSUS_DIR", None)
+        # The backend treats an unset value as its default runs/census directory.
+        env["REIMS_VGPU_CENSUS_DIR"] = ""
 
 
 def graphics_policy_metadata(mode: str, env: Mapping[str, str]) -> dict[str, object]:

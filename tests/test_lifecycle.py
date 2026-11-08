@@ -52,7 +52,7 @@ def test_graphics_modes_override_inherited_strict_and_census_flags(tmp_path):
     compatible = dict(inherited)
     lifecycle.apply_graphics_environment(compatible, "compatible", tmp_path / "compatible-census")
     assert compatible["REIMS_VGPU_STRICT"] == "0"
-    assert "REIMS_VGPU_CENSUS_DIR" not in compatible
+    assert compatible["REIMS_VGPU_CENSUS_DIR"] == ""
     assert compatible["REIMS_VGPU_EXACT"] == "batch_order"
     assert compatible["REIMS_VGPU_DIRTY_PAGE_TRACKING"] == "0"
 
@@ -320,8 +320,14 @@ def test_detached_supervisor_retains_disk_lock_and_stops_exact_qmp_peer(
         binary.parent.mkdir(parents=True)
         shutil.copy2(lifecycle.Path(sys.executable).resolve(), binary)
         script = backend / "run-vphone.sh"
+        # Keep the backend's unset-versus-empty census default in this fake launcher.
         script.write_text(
-            '#!/bin/sh\nexport PYTHONHOME="$FAKE_PYTHON_HOME"\nexec "$QEMU" -c "$FAKE_QEMU_PROGRAM" "$@"\n'
+            "#!/bin/sh\n"
+            "export REIMS_VGPU_CENSUS_DIR=${REIMS_VGPU_CENSUS_DIR-$PWD/runs/census}\n"
+            'if [ -n "$REIMS_VGPU_CENSUS_DIR" ]; then mkdir -p "$REIMS_VGPU_CENSUS_DIR"; '
+            "else unset REIMS_VGPU_CENSUS_DIR; fi\n"
+            'export PYTHONHOME="$FAKE_PYTHON_HOME"\n'
+            'exec "$QEMU" -c "$FAKE_QEMU_PROGRAM" "$@"\n'
         )
         script.chmod(0o700)
         fakebin = paths.prefix / "bin"
@@ -392,12 +398,11 @@ server.close()
                 f"{runtime._metadata()['run_dir']}/window.sock"
             )
             assert actual_env["REIMS_VGPU_STRICT"] == ("1" if graphics_mode == "strict" else "0")
-            if graphics_mode == "compatible":
+            if graphics_mode in {"compatible", "strict"}:
                 assert actual_env["REIMS_VGPU_CENSUS_DIR"] is None
             else:
-                assert actual_env["REIMS_VGPU_CENSUS_DIR"] == (
-                    "" if graphics_mode == "strict" else f"{runtime._metadata()['run_dir']}/census"
-                )
+                census_dir = f"{runtime._metadata()['run_dir']}/census"
+                assert actual_env["REIMS_VGPU_CENSUS_DIR"] == census_dir
             assert actual_env["REIMS_VGPU_EXACT"] == "pipeline_waits"
             assert runtime.status()["graphics_policy"] == {
                 "mode": graphics_mode,
