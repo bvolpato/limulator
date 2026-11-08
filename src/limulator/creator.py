@@ -1203,10 +1203,10 @@ def _migration_result_from_settings(reply: object) -> dict:
 
 def _verify_migration_result(result: dict, expected_build: str) -> None:
     success = result.get("success")
-    if success is False:
+    if success is False or (type(success) is int and success == 0):
         raise RuntimeError("guest DataMigrator reported migration success=false")
-    if success is not True:
-        raise RuntimeError("guest DMLastMigrationResults is missing a boolean success value")
+    if success is not True and not (type(success) is int and success == 1):
+        raise RuntimeError("guest DMLastMigrationResults has an unsupported success value")
 
     actual_build = result.get("buildVersion")
     if not isinstance(actual_build, str) or not actual_build:

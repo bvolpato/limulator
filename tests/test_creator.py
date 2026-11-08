@@ -115,15 +115,16 @@ def test_expected_migration_build_refuses_profile_without_build_in_firmware_file
         creator._expected_migration_build(profile, {"build": "unknown"})
 
 
-def test_creation_rejects_failed_migration_even_when_setup_build_marker_matches(tmp_path):
+@pytest.mark.parametrize("success", [False, 0])
+def test_creation_rejects_failed_migration_even_when_setup_build_marker_matches(tmp_path, success):
     expected = {"data_migration_done": True, "pending": False}
-    result = {"buildVersion": "24A94425", "success": False}
+    result = {"buildVersion": "24A94425", "success": success}
     state_path = tmp_path / ".limulator-create.json"
     state = {"stage": "verification"}
 
     with pytest.raises(RuntimeError, match="success=false"):
         creator._verify_guest_migration(
-            _SettingsGuest(_migration_settings(success=False)),
+            _SettingsGuest(_migration_settings(success=success)),
             expected,
             state_path,
             state,
@@ -136,8 +137,9 @@ def test_creation_rejects_failed_migration_even_when_setup_build_marker_matches(
     assert receipt["migration_expected_build"] == "24A94425"
 
 
-def test_creation_accepts_successful_migration_for_expected_build(tmp_path):
-    guest = _SettingsGuest(_migration_settings())
+@pytest.mark.parametrize("success", [True, 1])
+def test_creation_accepts_successful_migration_for_expected_build(tmp_path, success):
+    guest = _SettingsGuest(_migration_settings(success=success))
     result = creator._verify_guest_migration(
         guest,
         {"data_migration_done": True, "pending": False},
@@ -146,8 +148,14 @@ def test_creation_accepts_successful_migration_for_expected_build(tmp_path):
         "24A94425",
     )
 
-    assert result == {"buildVersion": "24A94425", "success": True}
+    assert result == {"buildVersion": "24A94425", "success": success}
     assert guest.calls == [("settings.get", {"domain": "com.apple.migration"})]
+
+
+@pytest.mark.parametrize("success", [None, "true", "1", 1.0, 0.0, 2])
+def test_creation_rejects_unrecognized_migration_success_values(success):
+    with pytest.raises(RuntimeError, match="success value"):
+        creator._verify_migration_result({"buildVersion": "24A94425", "success": success}, "24A94425")
 
 
 def test_creation_rejects_migration_result_for_wrong_build(tmp_path):
