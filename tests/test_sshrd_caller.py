@@ -138,6 +138,11 @@ def test_pipeline_validates_and_binds_the_selected_bundle_before_native_helpers(
     script.parent.mkdir(parents=True)
     script.write_text("# VPHONE_CREATOR_USB_READY VPHONE_FIRST_BOOT_QMP\n")
     monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
+    monkeypatch.setattr(
+        creator._first_boot_check,
+        "backend_contract",
+        lambda _backend: {"mode": "legacy-strict", "revision": creator._first_boot_check._LEGACY},
+    )
     profile = get_profile("iphone-duo")
     candidate = Device("fixture", paths.vms / "fixture", profile.model, profile.os_version)
     vm = candidate.vm_path

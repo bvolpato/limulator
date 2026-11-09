@@ -455,6 +455,7 @@ def test_rpc_transport_preserves_absolute_deadline_and_refuses_late_dispatch(mon
 
 @pytest.fixture
 def pipeline(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIMULATOR_BACKEND", str(tmp_path / "backend"))
     paths = Paths(tmp_path / "data")
     vm = paths.vms / "duo"
     vm.mkdir(parents=True)
