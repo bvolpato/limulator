@@ -2,8 +2,8 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "iPhone smoke + one Duo video trial · full acceptance pending",
-    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a 666.58-second pause. iPad display classification also recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup, general app performance, and complete profile acceptance remain pending."
+    "detail": "iPhone smoke + Duo native trials · full acceptance pending",
+    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a 666.58-second pause. One controlled cold boot also reached BruTV Home and returned an unmodified native cover capture. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup, general app performance, and complete profile acceptance remain pending."
   },
   "guest": {
     "label": "iPhone 16 compatible run",
@@ -27,14 +27,14 @@
     "status": "acceptance-pending",
     "value": "Selected native checks passed",
     "proofLabel": "NATIVE APP CHECKS PASSED",
-    "workflowValue": "iPhone smoke + Duo video trial",
-    "captureValue": "6 iPhone and Duo captures",
-    "detail": "The 26-step compatible-graphics CounterLab smoke passed in one iPhone 16 run. A separate closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. This is one recovery trial, not a general playback or app-performance result. iPad framebuffer density and ProgressUI screen classification now match the profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation. Repeatable cold startup and complete iPhone, Duo, and iPad acceptance remain pending.",
-    "faq": "The 26-step CounterLab smoke passed on one compatible-graphics iPhone 16 guest. One closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, with source counters advancing in later captures. This does not establish broad playback reliability or app performance. The iPad's native framebuffer density and ProgressUI screen classification now match its profile after cache refresh and reboot. Fresh creation, migration, repeatable cold startup, and complete profile acceptance remain pending."
+    "workflowValue": "iPhone smoke + Duo native trials",
+    "captureValue": "7 iPhone and Duo captures",
+    "detail": "The 26-step compatible-graphics CounterLab smoke passed in one iPhone 16 run. A separate closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. This is one recovery trial, not a general playback or app-performance result. One controlled cold boot reached BruTV Home and returned an unmodified native cover capture; repeated cold startup remains unverified. iPad framebuffer density and ProgressUI screen classification now match the profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation. Repeatable cold startup and complete iPhone, Duo, and iPad acceptance remain pending.",
+    "faq": "The 26-step CounterLab smoke passed on one compatible-graphics iPhone 16 guest. One closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, with source counters advancing in later captures. This does not establish broad playback reliability or app performance. One controlled cold boot also reached BruTV Home and returned a native cover capture. The iPad's native framebuffer density and ProgressUI screen classification now match its profile after cache refresh and reboot. Fresh creation, migration, repeatable cold startup, and complete profile acceptance remain pending."
   },
-  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo BruTV session recovered local fixture playback 3.28 seconds after a 666.58-second pause. The iPad's display classification now matches its profile in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete profile acceptance remain pending.",
+  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo BruTV session recovered local fixture playback 3.28 seconds after a 666.58-second pause. A separate controlled cold boot reached BruTV Home and returned a native cover capture. The iPad's display classification now matches its profile in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete profile acceptance remain pending.",
   "faq": {
-    "release": "The public preview includes a passed iPhone 16 profile scenario and CounterLab smoke, one closed-Duo BruTV fixture playback and recovery trial, and partial iPad display-classification recovery. These checks do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation."
+    "release": "The public preview includes a passed iPhone 16 profile scenario and CounterLab smoke, one closed-Duo BruTV fixture playback and recovery trial, a native BruTV Home capture after one controlled cold boot, and partial iPad display-classification recovery. These checks do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation."
   },
   "nativeObservation": {
     "compatibleRun": {
@@ -139,6 +139,19 @@
     }
   },
   "captures": [
+    {
+      "file": "assets/native/brutv-duo-coldboot-home-native-cover-2026-11-09.png",
+      "title": "BruTV Home · native capture after cold boot",
+      "alt": "BruTV Home on the closed iPhone Duo display, with the local Timeshift fixture and a navigation rail on the right.",
+      "context": "One controlled closed-Duo cold boot reached BruTV Home. The app was verified in the foreground and the worker stayed healthy after this capture. Repeatable cold startup and complete profile acceptance remain pending.",
+      "device": "iPhone Duo · iPhone19,4",
+      "os": "iOS 27.1",
+      "posture": "Closed cover · 1398 × 2034 px",
+      "graphicsMode": "compatible",
+      "sha256": "20a41f409230b78d268a94aaeaaaba1b7c1557e958f924d19da6138679eea313",
+      "provenance": "Direct native cover-display PNG after one controlled cold boot, 9 Nov 2026; BruTV foreground verified at PID 1824 and the same worker remained healthy afterward. Original 1398 × 2034 pixels, with no resize or rotation; the visible 10.0.2.2 address belongs to the local fixture.",
+      "accepted": false
+    },
     {
       "file": "assets/native/counterlab-iphone16-compatible-count-1-after-reboot-2026-11-07.png",
       "title": "CounterLab · count retained after reboot",

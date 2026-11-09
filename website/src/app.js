@@ -291,6 +291,11 @@ function renderHeroCapture(captures = []) {
   const image = $("[data-hero-capture-image]");
   const caption = $("[data-hero-visual-caption]");
   const originalLabel = visual.getAttribute("aria-label");
+  const originalGuest = [
+    "[data-hero-guest-state]",
+    "[data-hero-guest-device]",
+    "[data-hero-guest-os]",
+  ].map((selector) => [selector, $(selector).textContent]);
   let candidateIndex = 0;
 
   const showCapture = (capture) => {
@@ -311,6 +316,9 @@ function renderHeroCapture(captures = []) {
     caption.hidden = true;
     setText("[data-hero-visual-kind]", "GUEST FRAME / 01");
     setText("[data-hero-visual-mode]", "NATIVE PNG");
+    setText("[data-hero-guest-state]", capture.accepted === true ? "Profile acceptance recorded" : "Profile acceptance pending");
+    setText("[data-hero-guest-device]", capture.device || "iOS guest");
+    setText("[data-hero-guest-os]", capture.os || "OS unrecorded");
     visual.setAttribute("aria-label", `Native guest capture: ${description}`);
   };
 
@@ -326,6 +334,7 @@ function renderHeroCapture(captures = []) {
       caption.hidden = false;
       setText("[data-hero-visual-kind]", "DEVICE PROFILE / 01");
       setText("[data-hero-visual-mode]", "SCHEMATIC");
+      originalGuest.forEach(([selector, value]) => setText(selector, value));
       visual.setAttribute("aria-label", originalLabel);
       return;
     }
