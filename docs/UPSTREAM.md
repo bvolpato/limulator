@@ -1,6 +1,6 @@
 # Dependency forks and upstream contributions
 
-Limulator pins complete dependency commits instead of applying its own patch files during bootstrap. Each fork's `dev` branch contains the changes needed together by Limulator. The lock uses full commit identifiers, so moving a branch does not change an existing installation.
+Limulator selects complete dependency commits that were tested together instead of applying its own patch files during bootstrap. A fork's current `dev` tip can include experimental commits that the default lock does not select. The lock uses full commit identifiers, so moving a branch does not change an existing installation.
 
 | Component | Integration fork | Upstream project |
 |---|---|---|
@@ -13,6 +13,26 @@ Xtool already uses its own pinned fork revision and the existing [platform-build
 Limulator owns app builds and deployment, device registration, process and disk ownership, workstation resource limits, the local console, and acceptance scenarios. These stay here. Linux-specific Swift overlays belong to the Linux backend; portable corrections belong in the CLI source itself. A `dev` integration branch is not an upstream PR: contributions use separate branches and focused changes.
 
 The Linux backend still carries its own APFS compatibility patch and Swift source overlays. Those are existing parts of that dependency's Linux port. This migration removes Limulator's additional patch series, not every transformation performed inside upstream's build.
+
+## Current proposals and readiness
+
+The proposal statuses below were checked on 9 November 2026. They are separate from the fork integration branches; an upstream PR being open, ready, or merged does not update the default lock.
+
+| Component | Upstream proposal | Current state |
+|---|---|---|
+| CLI input geometry | [vphone-cli #885](https://github.com/Lakr233/vphone-cli/pull/885) | Draft; depends on [Icli #19](https://github.com/owngoal-dev/icli/pull/19), which has no PR CI. #885 CI passes; native point geometry, orientation, accessibility, and 3× profile gates remain. |
+| CLI display-layout Booleans | [vphone-cli #886](https://github.com/Lakr233/vphone-cli/pull/886) | Ready; exact-head CI passes. A worker built from `03992731` returned raw JSON and verified 2× metrics; later notice-gate changes did not alter its runtime inputs. This does not prove a fresh boot. Consumer #879 remains draft without standalone #886 integration. |
+| CLI package admission | [vphone-cli #888](https://github.com/Lakr233/vphone-cli/pull/888) | Open; strict notice-marker and collected-file hash checks run before packaging and upload. [Exact-head CI passes](https://github.com/Lakr233/vphone-cli/actions/runs/42666591899). |
+| libarchive XCFramework | [libarchive.xcframework #1](https://github.com/Lakr233/libarchive.xcframework/pull/1) | Open and ready; preserves the aggregate notice and refuses notice-path links. Local and peer fixtures pass; no PR CI or Apple build/link check. |
+| OpenSSL Swift package | [openssl-spm #6](https://github.com/Lakr233/openssl-spm/pull/6) | Open and ready; refuses top-level container links. Peer fixtures and [exact-head fork CI](https://github.com/bvolpato/openssl-spm/actions/runs/42671892989) pass. |
+| Ghostty Swift package | [libghostty-spm #104](https://github.com/Lakr233/libghostty-spm/pull/104) | Open and ready; carries source-notice and revision/tree/patch provenance through slices and archives. Host fixtures and peer review pass; no full Zig build. |
+| Apple Mobile Device Library | [AppleMobileDeviceLibrary #1](https://github.com/Lakr233/AppleMobileDeviceLibrary/pull/1) | Open and ready; carries seven compiled libraries' and wrapper's notices and source/tree/patch provenance through universal binaries, XCFrameworks, SPM ZIPs, and binary packs. [Host CI passes](https://github.com/bvolpato/AppleMobileDeviceLibrary/actions/runs/42671917259); notice-sensitive release fingerprints avoid wrapper-HEAD-only release loops. Its scheduled publisher remains separate. |
+
+These publisher checks cover packaging and archive behavior only. They did not produce a rebuilt, verified Apple binary release. OpenSSL, Ghostty, and Apple upstream PR workflows await maintainer approval; libarchive has no PR CI. The Apple Mobile Device Library's upstream scheduled publisher remains independent of the release-fingerprint change.
+
+Treat source builds, warm-worker checks, profile acceptance, and package admission as separate evidence. A warm-worker check verifies only the already-running worker's cache, request, or metrics path; it does not prove cold startup. Clean creation and repeatable cold boots need their own runs. Profile acceptance also needs independent checks for input, accessibility, 3× rendering, and graphics fidelity. Strict notice mode rejects missing-marker rows and verifies hashes for collected notices. It does not audit legal compliance or complete transitive coverage, and it does not establish runtime or release readiness.
+
+Native UI experiments ran on an isolated iPad clone. Full file hashes and recorded stable metadata matched the preserved original inventory after the trial. The clone completed a clean OS shutdown and all host ownership locks were released; a separate guest was left running.
 
 ## Component contributions
 
