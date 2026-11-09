@@ -1300,7 +1300,21 @@ def test_retry_preserves_unresolved_cleanup_without_accepting_a_new_mount_baseli
 def cleanup_scope(monkeypatch):
     unit = "limulator-create-1000-aabbccdd.scope"
     group = f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"
-    boot = creator.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    boot = "fixture-kernel-boot"
+    namespace = "mnt:[fixture]"
+    read_text, readlink = creator.Path.read_text, os.readlink
+    monkeypatch.setattr(
+        creator.Path,
+        "read_text",
+        lambda path, *args, **kwargs: (
+            boot if str(path) == "/proc/sys/kernel/random/boot_id" else read_text(path, *args, **kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        _creation_cleanup.os,
+        "readlink",
+        lambda path: namespace if str(path) == "/proc/self/ns/mnt" else readlink(path),
+    )
     identity = {
         "pid": 4321,
         "start_ticks": 1234,
@@ -1309,7 +1323,7 @@ def cleanup_scope(monkeypatch):
         "exe": "/usr/bin/sshfs",
         "argv": [],
         "cgroup": f"0::{group}\n",
-        "mount_namespace": os.readlink("/proc/self/ns/mnt"),
+        "mount_namespace": namespace,
     }
     alive = {identity["pid"]: identity}
     properties = {
@@ -1322,9 +1336,96 @@ def cleanup_scope(monkeypatch):
     monkeypatch.setattr(_creation_cleanup, "_scope_processes", lambda *_: list(alive.values()))
     monkeypatch.setattr(_creation_cleanup, "_identity", lambda pid: alive.get(pid))
     monkeypatch.setattr(_creation_cleanup, "_pidfd", lambda pid: os.open("/dev/null", os.O_RDONLY))
+    monkeypatch.setattr(
+        _creation_cleanup.select,
+        "poll",
+        lambda: SimpleNamespace(register=lambda *_: None, poll=lambda *_: []),
+    )
     monkeypatch.setattr(_creation_cleanup, "mounts", lambda: [])
     monkeypatch.setattr(_creation_cleanup, "_loop_states", lambda: [], raising=False)
     return unit, boot, identity, alive, _CREATION_INVOCATION_ID
+
+
+@pytest.mark.parametrize("phase", ["pinning", "signal"])
+@pytest.mark.parametrize(
+    "readiness", ["exited", "live", "invalid", "unknown", "malformed", "wrong-fd", "error"]
+)
+def test_scope_cleanup_requires_pidfd_exit_proof_for_torn_identity(
+    cleanup_scope, monkeypatch, phase, readiness
+):
+    unit, boot, exporter, alive, invocation_id = cleanup_scope
+    exporter.update(exe="/usr/bin/python3.12", argv=["python3.12", "/fixture/vusb-usbip.py"])
+    client = dict(exporter, pid=5555, exe="/fixture/vphone-cli", argv=["vphone-cli", "boot"])
+    alive[client["pid"]] = client
+    pinned, signals, reads = {}, [], 0
+
+    def pin(pid):
+        fd = os.open("/dev/null", os.O_RDONLY)
+        pinned[fd] = pid
+        return fd
+
+    def identity(pid):
+        nonlocal reads
+        if pid == exporter["pid"]:
+            reads += 1
+            if reads == (1 if phase == "pinning" else 2):
+                if readiness == "exited":
+                    alive.pop(pid)
+                return exporter | {"argv": []}
+        return alive.get(pid)
+
+    class Poll:
+        def register(self, fd, events):
+            assert events == _creation_cleanup.select.POLLIN
+            assert pinned[fd] == exporter["pid"]
+            self.fd = fd
+
+        def poll(self, timeout):
+            assert timeout == 0
+            if readiness == "exited":
+                assert exporter["pid"] not in alive
+                mask = _creation_cleanup.select.POLLIN
+                if phase == "pinning":
+                    mask |= _creation_cleanup.select.POLLHUP
+                return [(self.fd, mask)]
+            if readiness == "live":
+                return []
+            if readiness == "invalid":
+                return [(self.fd, _creation_cleanup.select.POLLIN | _creation_cleanup.select.POLLNVAL)]
+            if readiness == "unknown":
+                return [(self.fd, _creation_cleanup.select.POLLPRI)]
+            if readiness == "malformed":
+                return [(self.fd,)]
+            if readiness == "wrong-fd":
+                return [(self.fd + 1, _creation_cleanup.select.POLLIN)]
+            raise OSError("fixture pidfd poll failed")
+
+    def terminate(fd, value):
+        pid = pinned[fd]
+        signals.append((pid, value))
+        alive.pop(pid)
+
+    monkeypatch.setattr(_creation_cleanup, "_pidfd", pin)
+    monkeypatch.setattr(_creation_cleanup, "_identity", identity)
+    monkeypatch.setattr(_creation_cleanup.select, "poll", Poll)
+    monkeypatch.setattr(_creation_cleanup, "_signal", terminate)
+    monkeypatch.setattr(
+        _creation_cleanup.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not unmount")
+    )
+    if readiness == "exited":
+        _creation_cleanup.cleanup(
+            unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+        )
+        assert signals == [(client["pid"], creator.signal.SIGTERM)]
+        assert alive == {}
+    else:
+        error = OSError if readiness == "error" else RuntimeError
+        with pytest.raises(error, match="identity changed|pidfd"):
+            _creation_cleanup.cleanup(
+                unit, 1000, boot, [], scope_owned=True, expected_invocation_id=invocation_id
+            )
+        assert signals == []
+        assert alive == {exporter["pid"]: exporter, client["pid"]: client}
 
 
 @pytest.mark.parametrize("changed", ["start_ticks", "cgroup"])
