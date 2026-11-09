@@ -2,8 +2,8 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "iPhone smoke + Duo native trials · full acceptance pending",
-    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a 666.58-second pause. One controlled cold boot also reached BruTV Home and returned an unmodified native cover capture. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup, general app performance, and complete profile acceptance remain pending."
+    "detail": "iPhone smoke + Duo and iPad native trials · full acceptance pending",
+    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a long pause. A controlled cold boot reached BruTV Home. An iPad mini guest completed migration, launched CounterLab built with SDK 27.2, displayed the expected UIKit metrics and responded to a physical tap. Automated iPad inspection remains blocked by unknown FrontBoard orientation. Clean creation, repeatable cold startup, general app performance and complete profile acceptance remain pending."
   },
   "guest": {
     "label": "iPhone 16 compatible run",
@@ -27,14 +27,14 @@
     "status": "acceptance-pending",
     "value": "Selected native checks passed",
     "proofLabel": "NATIVE APP CHECKS PASSED",
-    "workflowValue": "iPhone smoke + Duo native trials",
-    "captureValue": "7 iPhone and Duo captures",
-    "detail": "The 26-step compatible-graphics CounterLab smoke passed in one iPhone 16 run. A separate closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. This is one recovery trial, not a general playback or app-performance result. One controlled cold boot reached BruTV Home and returned an unmodified native cover capture; repeated cold startup remains unverified. iPad framebuffer density and ProgressUI screen classification now match the profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation. Repeatable cold startup and complete iPhone, Duo, and iPad acceptance remain pending.",
-    "faq": "The 26-step CounterLab smoke passed on one compatible-graphics iPhone 16 guest. One closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, with source counters advancing in later captures. This does not establish broad playback reliability or app performance. One controlled cold boot also reached BruTV Home and returned a native cover capture. The iPad's native framebuffer density and ProgressUI screen classification now match its profile after cache refresh and reboot. Fresh creation, migration, repeatable cold startup, and complete profile acceptance remain pending."
+    "workflowValue": "iPhone smoke + Duo and iPad trials",
+    "captureValue": "8 iPhone, Duo and iPad captures",
+    "detail": "CounterLab smoke passed on one iPhone 16 guest. A closed-Duo session rendered local H.264 HLS video and recovered after a long pause; one controlled cold boot reached BruTV Home. On iPad mini, an SDK 27.2 app visibly reported iPadOS 27.0.1, the iPad idiom, 744 × 1133 points and 2× scale. A physical framebuffer tap changed its count from 0 to 1. Automated iPad inspection still refuses unknown FrontBoard orientation. The iPhone migration failure, repeatable cold startup, general app performance and complete profile acceptance remain open.",
+    "faq": "Native checks include iPhone CounterLab smoke, one closed-Duo video recovery trial, BruTV Home after one cold boot, and iPad CounterLab metrics and a physical tap. The iPad app visibly reports the expected idiom, point size and scale, but automated inspection still refuses unknown FrontBoard orientation. These trials do not establish complete device acceptance, repeatable cold startup or general performance."
   },
-  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo BruTV session recovered local fixture playback 3.28 seconds after a 666.58-second pause. A separate controlled cold boot reached BruTV Home and returned a native cover capture. The iPad's display classification now matches its profile in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete profile acceptance remain pending.",
+  "workflowNote": "CounterLab builds with SDK 27.2. Native checks cover iPhone smoke, selected Duo playback and cold-start behavior, and an iPad app displaying the expected UIKit metrics and responding to a physical tap. Automated iPad inspection remains blocked by its FrontBoard orientation report. Complete creation, repeatable cold startup and full profile acceptance remain pending.",
   "faq": {
-    "release": "The public preview includes a passed iPhone 16 profile scenario and CounterLab smoke, one closed-Duo BruTV fixture playback and recovery trial, a native BruTV Home capture after one controlled cold boot, and partial iPad display-classification recovery. These checks do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation."
+    "release": "The public preview has native iPhone, Duo and iPad evidence. The iPad completed migration and ran CounterLab with the expected UIKit metrics, but automated UI inspection is still blocked. The iPhone migration failure, repeatable cold startup, app performance and complete device acceptance remain open."
   },
   "nativeObservation": {
     "compatibleRun": {
@@ -153,6 +153,19 @@
       "accepted": false
     },
     {
+      "file": "assets/native/counterlab-ipad-mini-native-profile-tap-2026-11-09.png",
+      "title": "CounterLab · native iPad metrics and touch",
+      "alt": "CounterLab on iPad mini reports iPadOS 27.0.1, the iPad idiom, 744 by 1133 points and 2x scale, with the count at 1 after a physical tap.",
+      "context": "An SDK 27.2 app ran on the iPad mini guest and responded to a physical touchscreen tap. Its visible UIKit metrics match the profile. Automated inspection still refuses unknown FrontBoard orientation; full acceptance remains pending.",
+      "device": "iPad mini (A17 Pro) · iPad16,1",
+      "os": "iPadOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 744 × 1133 pt @ 2×",
+      "graphicsMode": "compatible",
+      "sha256": "2b03a50fef4ff239dac9c8e82c187f0612a79476d9319207882c810feac413c6",
+      "provenance": "Direct 1488 × 2266 pixel QMP framebuffer capture, 9 Nov 2026, after one physical tap changed CounterLab from 0 to 1. Original image bytes, no resize or rotation. This is visual evidence, not a passed automated profile scenario.",
+      "accepted": false
+    },
+    {
       "file": "assets/native/counterlab-iphone16-compatible-count-1-after-reboot-2026-11-07.png",
       "title": "CounterLab · count retained after reboot",
       "alt": "CounterLab's main screen on an iPhone 16 guest shows the saved count at 1 after the guest rebooted.",
@@ -255,5 +268,62 @@
       }
     ],
     "scope": "This is a QEMU cache-invalidation microbenchmark. It does not measure app startup, interaction latency, graphics performance, or user-visible speed."
+  },
+  "ipadObservation": {
+    "observedOn": "2026-11-09",
+    "device": "iPad mini (A17 Pro) · iPad16,1",
+    "guestOs": "iPadOS 27.0.1",
+    "firmwareBuild": "24A446",
+    "graphicsMode": "compatible",
+    "app": {
+      "bundleId": "com.bvolpato.limulator.counterlab",
+      "sdk": "27.2",
+      "ipaSha256": "379fc3e5311e6eceb82add23cee08f045f5a026eb32f409dd7b23f4ec4769343",
+      "sourceRevision": "e499b2af7c006b90358578b7d1ec2f39f90a3cb9",
+      "installTransport": "files.write RPC; complete files.read hash verified"
+    },
+    "uikit": {
+      "evidence": "Visible app labels in unmodified native framebuffer",
+      "idiom": "iPad",
+      "pointSize": [
+        744,
+        1133
+      ],
+      "scale": 2
+    },
+    "physicalTap": {
+      "transport": "QMP virtual USB touchscreen",
+      "countBefore": 0,
+      "countAfter": 1,
+      "receiptSha256": "2406bc6dc177244040f8bd35cd56f346733f911d7ff1d342fcbdc10b3345c2ff"
+    },
+    "orientation": {
+      "frontBoardRaw": 0,
+      "accessibilitySpringBoardRaw": 1,
+      "accessibilityGetterABI": "q16@0:8",
+      "automatedInspection": "unavailable; no orientation substituted"
+    },
+    "migration": {
+      "success": true,
+      "build": "24A446",
+      "done": true
+    },
+    "softwareProvenance": {
+      "backendRevision": "0dcf8f5854d823c33929a48c483b25875987fbf8",
+      "vphoneCliRevision": "fa4c3b0adbb38c8eca0b62f3a7ef553ed6eb3825",
+      "icliRevision": "82d54abb97901ccceb36c748b066202837952116",
+      "qemuRevision": "7e7290a51877ece745c36b084b42df42ca07bb7f",
+      "qemuSha256": "f31e3023691f7fba2fc989fb0472f4d8135ffddef195aa760ef4c173a232c5a4",
+      "installedWorkerSha256": "5184911dc547d5a6d5942140a6ea1dd77557a1bbb11e399b578e816c16137753"
+    },
+    "profileScenarioPassed": false,
+    "creationAccepted": false,
+    "defaultDependenciesChanged": false,
+    "limits": [
+      "Single preserved-guest trial",
+      "Automated inspection and full iPad scenario remain blocked",
+      "Large binary-stream uploads failed; their cause remains under investigation",
+      "No repeatability or performance claim"
+    ]
   }
 }

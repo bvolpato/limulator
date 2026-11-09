@@ -42,9 +42,9 @@
     {
       "id": "ipad",
       "label": "iPad mini (A17 Pro)",
-      "badge": "Display classification recovered · app checks pending",
+      "badge": "Native app metrics and touch · acceptance pending",
       "state": "research",
-      "validation": "Native framebuffer density now matches the profile at 326 PPI, and ProgressUI reports supported screen class 28 after cache refresh and reboot. Fresh creation, migration success, and the native CounterLab iPad scenario remain unaccepted.",
+      "validation": "One iPad mini guest completed migration and ran CounterLab built with SDK 27.2. The app visibly reported iPadOS 27.0.1, iPad idiom, 744 × 1133 points and 2× scale, and its count changed after a physical touchscreen tap. Automated inspection still refuses unknown FrontBoard orientation; the full profile scenario has not passed.",
       "diagram": "ipad",
       "form": "Tablet display · experimental profile",
       "device": "iPad mini (A17 Pro)",
@@ -54,9 +54,9 @@
       "deviceName": "ipad-mini",
       "scale": "2× native scale",
       "dimensions": "1488 × 2266 px",
-      "postures": "Display class recovered · UIKit .pad app checks pending",
-      "note": "The native framebuffer now reports the profile's 326 PPI density, and ProgressUI reports supported screen class 28 after a clean reboot. This recovers display classification in the preserved research guest. Fresh creation, migration success, and a native CounterLab .pad scenario remain to be verified.",
-      "source": "Experimental catalog profile"
+      "postures": "Portrait app metrics and physical touch observed",
+      "note": "The native framebuffer matches the 326 PPI profile. In one preserved guest with completed migration, CounterLab displayed the expected UIKit metrics and responded to a physical tap. Automated UI inspection remains blocked: FrontBoard reports unknown orientation while an independent SpringBoard getter reports portrait. Large binary-stream uploads also failed; a hash-verified file-write RPC installed the app. Full creation, automated profile acceptance, repeatable cold startup and general performance remain unverified.",
+      "source": "Native iPad app trial · acceptance pending"
     }
   ]
 }
