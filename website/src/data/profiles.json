@@ -42,9 +42,9 @@
     {
       "id": "ipad",
       "label": "iPad mini (A17 Pro)",
-      "badge": "Native app metrics and touch · acceptance pending",
+      "badge": "Native iPad checks · acceptance pending",
       "state": "research",
-      "validation": "One iPad mini guest completed migration and ran CounterLab built with SDK 27.2. The app visibly reported iPadOS 27.0.1, iPad idiom, 744 × 1133 points and 2× scale, and its count changed after a physical touchscreen tap. Automated inspection still refuses unknown FrontBoard orientation; the full profile scenario has not passed.",
+      "validation": "Migration, visual metrics, touchscreen input, and one read-only scale check passed in this diagnostic guest. Full automated profile acceptance is still pending.",
       "diagram": "ipad",
       "form": "Tablet display · experimental profile",
       "device": "iPad mini (A17 Pro)",
@@ -54,8 +54,8 @@
       "deviceName": "ipad-mini",
       "scale": "2× native scale",
       "dimensions": "1488 × 2266 px",
-      "postures": "Portrait app metrics and physical touch observed",
-      "note": "The native framebuffer matches the 326 PPI profile. In one preserved guest with completed migration, CounterLab displayed the expected UIKit metrics and responded to a physical tap. Automated UI inspection remains blocked: FrontBoard reports unknown orientation while an independent SpringBoard getter reports portrait. Large binary-stream uploads also failed; a hash-verified file-write RPC installed the app. Full creation, automated profile acceptance, repeatable cold startup and general performance remain unverified.",
+      "postures": "Diagnostic portrait app metrics and QMP touch observed",
+      "note": "CounterLab displayed the expected 744 × 1133 point screen at 2× and responded to a virtual touchscreen tap. An experimental worker also verified that the configured scale needed no change. This used diagnostic graphics; automated UI inspection, clean creation, repeatable startup, and GPU fidelity remain unverified.",
       "source": "Native iPad app trial · acceptance pending"
     }
   ]
