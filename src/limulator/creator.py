@@ -23,6 +23,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from . import _creation_cleanup
 from .graphics import (
@@ -45,6 +46,7 @@ from .lifecycle import (
     _lock_disk,
     _private_directory,
     _read_json,
+    _read_vm_identity,
     _require_cache_publication_complete,
     _resource_guard,
     _validate_name,
@@ -84,6 +86,20 @@ def _firmware_cache(env: dict[str, str]) -> Path:
     return Path(env.get("VSETUP_CACHE") or Path.home() / ".cache/vphone").expanduser().resolve()
 
 
+def _sshrd_bootstrap_environment(env: dict[str, str]) -> None:
+    prebuilt = env.get("VPHONE_SSHRD_BOOTSTRAP", "")
+    build = env.get("VPHONE_SSHRD_BOOTSTRAP_BUILD", "0" if prebuilt else "1")
+    if build not in ("0", "1"):
+        raise ValueError("VPHONE_SSHRD_BOOTSTRAP_BUILD must be 0 or 1")
+    if prebuilt and build == "1":
+        raise ValueError("choose VPHONE_SSHRD_BOOTSTRAP or VPHONE_SSHRD_BOOTSTRAP_BUILD=1, not both")
+    if not prebuilt and build == "0":
+        raise ValueError("creation requires an ECID-aware SSHRD bootstrap: select source build or a prebuilt")
+    env["VPHONE_SSHRD_BOOTSTRAP_BUILD"] = build
+    if prebuilt:
+        env["VPHONE_SSHRD_BOOTSTRAP"] = str(Path(prebuilt).expanduser().resolve())
+
+
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
     xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
@@ -114,8 +130,33 @@ def _native_env(paths: Paths) -> dict[str, str]:
         KEEP="1",
         VSETUP_ASSUME_YES="1",
     )
+    _sshrd_bootstrap_environment(env)
     _normalize_backend_controls(env)
     return env
+
+
+def _hex_ecid(value: str, label: str) -> int:
+    if not re.fullmatch(r"(?:0[xX])?[0-9a-fA-F]{1,16}", value) or int(value, 16) == 0:
+        raise ValueError(f"{label} must be nonzero with 1-16 hexadecimal digits, optionally prefixed with 0x")
+    return int(value, 16)
+
+
+def _bind_vm_ecid(vm: Path, env: dict[str, str]) -> None:
+    try:
+        selected = _hex_ecid(_read_vm_identity(vm / "ecid", 64).decode("ascii").rstrip("\n"), "VM ECID")
+        config = plistlib.loads(_read_vm_identity(vm / "config.plist", 1 << 20))
+        identifier = config.get("machineIdentifier") if isinstance(config, dict) else None
+        machine = plistlib.loads(identifier) if isinstance(identifier, bytes) else None
+        configured = machine.get("ECID") if isinstance(machine, dict) else None
+        if type(configured) is not int or not 0 < configured < 1 << 64:
+            raise ValueError("config.plist has no valid nonzero UInt64 machine ECID")
+        if configured != selected:
+            raise ValueError("VM ecid does not match config.plist machine ECID")
+    except (OSError, ValueError, TypeError, plistlib.InvalidFileException, ExpatError) as error:
+        raise ValueError(f"invalid selected VM ECID identity: {error}") from error
+    if "VPHONE_ECID" in env and _hex_ecid(env["VPHONE_ECID"], "VPHONE_ECID") != selected:
+        raise ValueError("VPHONE_ECID does not match the selected VM bundle")
+    env["VPHONE_ECID"] = f"0x{selected:x}"
 
 
 def _write_usb_trace(path: Path, source: str, event: str, **fields) -> bool:
@@ -317,7 +358,7 @@ def _resolve_candidate(
 
 def _apply_profile_configuration(vm: Path, profile: DeviceProfile, scale: int) -> None:
     path = vm / "config.plist"
-    original = path.read_bytes()
+    original = _read_vm_identity(path, 1 << 20)
     config = plistlib.loads(original)
     updated = dict(config)
     updated.update(
@@ -1477,6 +1518,7 @@ def _pipeline(
         candidate.validate_vm()
         disk_fd = _lock_disk(vm / "Disk.img")
         _require_cache_publication_complete(vm)
+        _bind_vm_ecid(vm, env)
         resumed = _resume_completed_boot(paths, candidate, old, run_dir, disk_fd)
         if resumed is not None:
             state.update(verification_resume=resumed, completed=_completed(vm), stage="booted")
@@ -1601,8 +1643,7 @@ def _pipeline(
         _atomic_json(state_path, state)
         _stop_creation_guest(vm, candidate.cid, unit)
         _apply_profile_configuration(vm, profile, int(candidate.scale))
-        with (vm / "config.plist").open("rb") as stream:
-            screen = plistlib.load(stream)["screenConfig"]
+        screen = plistlib.loads(_read_vm_identity(vm / "config.plist", 1 << 20))["screenConfig"]
         width, height = map(int, (vm / "gfx-res").read_text().strip().split("x"))
         device = Device(
             candidate.name,

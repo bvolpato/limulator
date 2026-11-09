@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,58 @@ def device(tmp_path):
         plistlib.dumps({"platformType": "vresearch101", "diskImage": "Disk.img"})
     )
     return Device("phone", vm, "iPhone Duo", "26.1")
+
+
+@pytest.mark.parametrize("kind", ["fifo", "symlink"])
+def test_validate_vm_refuses_nonregular_config_without_blocking(device, tmp_path, monkeypatch, kind):
+    config = device.vm_path / "config.plist"
+    original = config.read_bytes()
+    config.unlink()
+    if kind == "fifo":
+        os.mkfifo(config)
+        original_open = Path.open
+
+        def refuse_fifo(path, *args, **kwargs):
+            if path == config:
+                pytest.fail("FIFO config reached a blocking open")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", refuse_fifo)
+    else:
+        outside = tmp_path / "outside.plist"
+        outside.write_bytes(original)
+        config.symlink_to(outside)
+    with pytest.raises(ValueError, match="invalid VM config.plist"):
+        device.validate_vm()
+
+
+@pytest.mark.parametrize("kind", ["fifo", "symlink"])
+def test_validate_vm_refuses_config_replacement_at_open(device, tmp_path, monkeypatch, kind):
+    config = device.vm_path / "config.plist"
+    outside = tmp_path / "outside.plist"
+    outside.write_bytes(config.read_bytes())
+    original_open = os.open
+    original_path_open = Path.open
+
+    def blocking_open(path, *args, **kwargs):
+        if path == config:
+            pytest.fail("config replacement could reach a blocking or following open")
+        return original_path_open(path, *args, **kwargs)
+
+    def replace_at_open(filename, flags, *args, **kwargs):
+        if Path(filename) == config:
+            assert flags & os.O_NONBLOCK and flags & os.O_NOFOLLOW
+            config.unlink()
+            if kind == "fifo":
+                os.mkfifo(config)
+            else:
+                config.symlink_to(outside)
+        return original_open(filename, flags, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", blocking_open)
+    monkeypatch.setattr(lifecycle.os, "open", replace_at_open)
+    with pytest.raises(ValueError, match="invalid VM config.plist"):
+        device.validate_vm()
 
 
 def test_paths_use_home_and_backend_overrides(tmp_path, monkeypatch):

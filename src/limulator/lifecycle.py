@@ -130,16 +130,38 @@ class Device:
             raise ValueError(f"VM requires a nonempty regular Disk.img: {disk}")
         config = self.vm_path / "config.plist"
         try:
-            if config.stat().st_size > 1 << 20:
+            if config.lstat().st_size > 1 << 20:
                 raise ValueError("config.plist exceeds 1 MiB")
-            with config.open("rb") as stream:
-                value = plistlib.load(stream)
+            value = plistlib.loads(_read_vm_identity(config, 1 << 20))
         except (OSError, plistlib.InvalidFileException, ValueError, TypeError, ExpatError) as exc:
             raise ValueError(f"invalid VM config.plist: {exc}") from exc
         if not isinstance(value, dict) or value.get("diskImage", "Disk.img") != "Disk.img":
             raise ValueError("config.plist must describe the backend's Disk.img")
         if value.get("platformType", "vresearch101") != "vresearch101":
             raise ValueError("config.plist platformType must be vresearch101")
+
+
+def _read_vm_identity(path: Path, limit: int) -> bytes:
+    def identity(info):
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+        raise ValueError(f"selected VM identity is not a bounded regular file: {path}")
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        expected = identity(before)
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != expected:
+            raise ValueError(f"selected VM identity changed before reading: {path}")
+        value = stream.read(limit + 1)
+        if (
+            len(value) > limit
+            or identity(os.fstat(stream.fileno())) != expected
+            or identity(path.lstat()) != expected
+        ):
+            raise ValueError(f"selected VM identity changed while reading: {path}")
+    return value
 
 
 def _private_directory(path: Path) -> None:
