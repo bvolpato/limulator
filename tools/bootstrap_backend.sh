@@ -179,11 +179,15 @@ build_apfs() {
 }
 build_release() {
   verify_sources
-  local version
+  local version resource_helper
   version=$(jq -er .release.version "$lock")
+  resource_helper=$here/../src/limulator/release_resources.py
+  [[ -f $resource_helper ]] || resource_helper=$here/../release_resources.py
+  VSETUP_RELEASE=$(uv run --script "$resource_helper" path --lock "$lock" --data "$LIMULATOR_HOME")
+  export VSETUP_RELEASE
   mkdir -p "$VSETUP_RELEASE"
   download "$(jq -er .release.url "$lock")" "$VSETUP_RELEASE/VPhone-$version.zip" "$(jq -er .release.sha256 "$lock")"
-  "$LIMULATOR_BACKEND/setup/setup.sh" release
+  uv run --script "$resource_helper" install --lock "$lock" --data "$LIMULATOR_HOME" --backend "$LIMULATOR_BACKEND"
 }
 case $phase in
   all) for step in sources apple_usb tools crypto swift signing gpu qemu cli usbmuxd apfs release; do "build_$step"; done ;;

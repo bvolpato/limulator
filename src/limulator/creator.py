@@ -51,9 +51,16 @@ from .lifecycle import (
 )
 from .profiles import DeviceProfile, FirmwareDescriptor, profile_for
 from .protocols import GuestClient, ProtocolError
+from .release_resources import (
+    _CREATE_HOST_LOCK,
+    lock_transport_file,
+    release_directory,
+    release_spec,
+    verify_release,
+)
+from .release_resources import HOST_CREATION_LOCK as _HOST_CREATION_LOCK
 
 _STAGES = ("sanity", "bundle", "firmware", "gpu-driver", "prepare", "patch", "restore", "cfw", "booted")
-_HOST_CREATION_LOCK = Path("/run/lock/limulator-create.lock")
 _BACKEND_CONTROL_ALIASES = (
     ("LIMULATOR_FIRST_BOOT_QMP", "VPHONE_FIRST_BOOT_QMP"),
     ("LIMULATOR_USB_TRACE", "VPHONE_USB_TRACE"),
@@ -86,6 +93,7 @@ def _firmware_cache(env: dict[str, str]) -> Path:
 
 def _native_env(paths: Paths) -> dict[str, str]:
     env = os.environ.copy()
+    release = release_spec()
     xtool_config = Path(env.get("LIMULATOR_XTOOL_CONFIG") or paths.data / "xtool/config").expanduser()
     env.setdefault("DARWIN_SDK_BUNDLE", str(xtool_config / "swiftpm/swift-sdks/darwin.artifactbundle"))
     env["PATH"] = os.pathsep.join(
@@ -99,7 +107,8 @@ def _native_env(paths: Paths) -> dict[str, str]:
         LIMULATOR_HOME=str(paths.data),
         VSETUP_SRC=str(paths.backend),
         VSETUP_DEVICES=str(paths.vms),
-        VSETUP_RELEASE=str(paths.data / "releases/vphone"),
+        VSETUP_RELEASE=str(release_directory(paths.data, release)),
+        VPHONE_CLI_PUBLIC=release["version"],
         VSETUP_CACHE=str(_firmware_cache(env)),
         VPHONE_RCODESIGN=str(paths.prefix / "bin/rcodesign"),
         VPHONE_APFS_KO=str(paths.backend / ".build/linux-apfs-rw/apfs.ko"),
@@ -114,6 +123,15 @@ def _native_env(paths: Paths) -> dict[str, str]:
         KEEP="1",
         VSETUP_ASSUME_YES="1",
     )
+    gpu_bundle = "AppleParavirtGPUMetalIOGPUFamily.bundle"
+    legacy_gpu = paths.data / "releases/vphone" / gpu_bundle
+    if (
+        "GPU_DRIVER_BUNDLE" not in env
+        and not (Path(env["VSETUP_RELEASE"]) / gpu_bundle).is_dir()
+        and not (_firmware_cache(env) / gpu_bundle).is_dir()
+        and legacy_gpu.is_dir()
+    ):
+        env["GPU_DRIVER_BUNDLE"] = str(legacy_gpu)
     _normalize_backend_controls(env)
     return env
 
@@ -205,34 +223,14 @@ def _verified_firmware_stage(vm: Path, files: tuple[tuple[Path, FirmwareDescript
 
 
 def _lock_transport_file(path: Path, owner: int) -> int:
-    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
-            raise RuntimeError(f"shared restore lock has unsafe ownership or permissions: {path}")
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("another guest creation owns the shared restore transport") from exc
-        return fd
-    except BaseException:
-        os.close(fd)
-        raise
+    return lock_transport_file(path, owner)
 
 
 def _host_creation_lock(env: dict[str, str]) -> int:
     try:
         return _lock_transport_file(_HOST_CREATION_LOCK, 0)
     except FileNotFoundError:
-        # Root ownership keeps another user from replacing the shared inode.
-        program = (
-            "import os,sys\n"
-            "try:\n"
-            " fd=os.open(sys.argv[1],os.O_CREAT|os.O_EXCL|os.O_RDONLY|os.O_NOFOLLOW,0o644)\n"
-            "except FileExistsError: pass\n"
-            "else: os.close(fd)\n"
-        )
-        _sudo(["/usr/bin/python3", "-c", program, str(_HOST_CREATION_LOCK)], env)
+        _sudo(["/usr/bin/python3", "-c", _CREATE_HOST_LOCK, str(_HOST_CREATION_LOCK)], env)
         return _lock_transport_file(_HOST_CREATION_LOCK, 0)
 
 
@@ -1334,6 +1332,7 @@ def _create_locked(
     for executable in (env["VC"], env["QEMU"], env["VPHONE_RCODESIGN"]):
         if not os.access(executable, os.X_OK):
             raise RuntimeError(f"required native tool is not built: {executable}")
+    verify_release(paths.data, paths.backend)
     if shutil.disk_usage(paths.data).free < 80 * (1 << 30):
         raise RuntimeError(
             "guest creation requires at least 80 GiB free for firmware, restore trees, and preserved images"
