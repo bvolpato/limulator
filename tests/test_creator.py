@@ -458,9 +458,16 @@ def _incomplete_vm(paths):
         stream.write(b"interrupted APFS media")
         stream.truncate(1 << 20)
     (vm / "config.plist").write_bytes(
-        plistlib.dumps({"diskImage": "Disk.img", "screenConfig": {"width": 12, "height": 24}})
+        plistlib.dumps(
+            {
+                "diskImage": "Disk.img",
+                "screenConfig": {"width": 12, "height": 24},
+                "machineIdentifier": plistlib.dumps({"ECID": 0x1234}),
+            }
+        )
     )
-    for name in ("ecid", "nvram.bin", "SEPStorage", "gfx-res", "gfx-res.3x"):
+    (vm / "ecid").write_text("0x1234\n")
+    for name in ("nvram.bin", "SEPStorage", "gfx-res", "gfx-res.3x"):
         (vm / name).write_bytes(f"previous {name}".encode())
     (vm / ".create-state").write_text("sanity\nbundle\nfirmware\ngpu-driver\nprepare\npatch\n")
     receipt = {
