@@ -93,6 +93,28 @@ def _pidfd(pid: int) -> int:
     return fd
 
 
+def _pinned_identity(identity: dict, fd: int) -> dict | None:
+    current = _identity(identity["pid"])
+    if current is None or current == identity:
+        return current
+    poller = select.poll()
+    poller.register(fd, select.POLLIN)
+    events = poller.poll(0)
+    if not events:
+        return current
+    if len(events) != 1 or len(events[0]) != 2:
+        raise RuntimeError("creation process pidfd exit status is invalid")
+    ready_fd, mask = events[0]
+    if (
+        type(ready_fd) is not int
+        or ready_fd != fd
+        or type(mask) is not int
+        or mask & ~(select.POLLIN | select.POLLHUP)
+    ):
+        raise RuntimeError("creation process pidfd exit status is invalid")
+    return None if mask & select.POLLIN else current
+
+
 def _signal(fd: int, value: int) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     libc.pidfd_send_signal.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint)
@@ -460,7 +482,7 @@ def _inactive_scope_is_empty(
 def _wait_for_identity_exit(identity: dict, fd: int, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while True:
-        current = _identity(identity["pid"])
+        current = _pinned_identity(identity, fd)
         if current is None:
             return True
         if current != identity:
@@ -480,7 +502,7 @@ def _stop_cfw_install_client(
     expected_invocation_id: str | None,
     scope_owned: bool,
 ) -> None:
-    current = _identity(identity["pid"])
+    current = _pinned_identity(identity, fd)
     if current is None:
         return
     if current != identity:
@@ -489,7 +511,7 @@ def _stop_cfw_install_client(
     _signal(fd, signal.SIGTERM)
     if _wait_for_identity_exit(identity, fd, 5):
         return
-    current = _identity(identity["pid"])
+    current = _pinned_identity(identity, fd)
     if current is None:
         return
     if current != identity:
@@ -566,7 +588,7 @@ def cleanup(
             except ProcessLookupError:
                 continue
             resources.callback(os.close, fd)
-            current = _identity(identity["pid"])
+            current = _pinned_identity(identity, fd)
             if current is None:
                 continue
             if current != identity:
@@ -675,7 +697,7 @@ def cleanup(
                 _unit_properties(unit, uid), group, expected_invocation_id, scope_owned
             )
             for identity, fd in remaining_pinned:
-                current = _identity(identity["pid"])
+                current = _pinned_identity(identity, fd)
                 if current is None:
                     continue
                 if current != identity:

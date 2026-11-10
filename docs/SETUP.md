@@ -36,6 +36,10 @@ Firmware downloads and verification use the native `VSETUP_CACHE` directory. An 
 
 CFW installation also creates large temporary files. Set `VPHONE_CFW_WORK_PARENT` to place them on another filesystem; unset or empty uses `/var/tmp`. The native CLI requires that parent to be root-owned and private or sticky. For example, create it with `sudo install -d -o root -g root -m 0700 /mnt/private-hdd/vphone-cfw-work`, then set `VPHONE_CFW_WORK_PARENT=/mnt/private-hdd/vphone-cfw-work` for creation. This controls CFW work separately from the firmware cache and VM directory.
 
+Creation explicitly selects the ECID-aware SSH ramdisk bootstrap. It defaults to `VPHONE_SSHRD_BOOTSTRAP_BUILD=1`, which uses the existing Darwin SDK and signing tools. To supply a prebuilt, set `VPHONE_SSHRD_BOOTSTRAP=/path/to/bootstrap`; Limulator resolves that path before the backend changes directory and selects build mode `0`. The backend still validates its code signature and staging requirements. Selecting both source mode and a prebuilt, an invalid build flag, or stock mode without a prebuilt fails before firmware work. The pinned older backend already supports source and prebuilt bootstraps; the explicit mode flag also preserves that choice with newer backends whose default is stock.
+
+After validating the selected VM bundle, creation checks that its hexadecimal `ecid` agrees with `config.plist`'s machine identifier and passes the canonical value through `VPHONE_ECID`. An explicit override must name the same nonzero ECID. Identity files must be bounded regular files; symbolic links and FIFOs are refused. A missing, malformed, or conflicting identity stops before USB helpers or restore start.
+
 ## Create and start a device
 
 List the pinned profiles before creating a device:
