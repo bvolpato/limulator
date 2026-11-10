@@ -766,6 +766,12 @@ class _USBHelpers:
         self._trace(event, **fields)
 
     def start(self):
+        socket_path = self.directory / "usbmuxd.sock"
+        encoded_path = os.fsencode(socket_path)
+        if b"\0" in encoded_path:
+            raise ValueError("private usbmuxd socket path contains a NUL byte")
+        if len(encoded_path) > 107:
+            raise ValueError("private usbmuxd socket path exceeds 107 bytes; shorten LIMULATOR_HOME")
         self.env.pop("LIMULATOR_CREATOR_USB_READY", None)
         self.env.pop("VPHONE_CREATOR_USB_READY", None)
         if _apple_devices():
@@ -794,7 +800,6 @@ class _USBHelpers:
         _sudo(["install", "-m", "0644", "/dev/stdin", self.rule], self.env, input=rule)
         self.rule_created = True
         _sudo(["udevadm", "control", "--reload"], self.env)
-        socket_path = self.directory / "usbmuxd.sock"
         self.env.update(USBMUXD_SOCKET=str(socket_path), USBMUXD_SOCKET_ADDRESS=f"UNIX:{socket_path}")
         private_config = self.directory / "pairing"
         _private_directory(private_config)

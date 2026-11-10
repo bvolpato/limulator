@@ -1826,7 +1826,46 @@ def test_private_helpers_refuse_existing_physical_apple_device(catalog, tmp_path
         helper.start()
 
 
-def test_private_helpers_publish_native_ready_only_after_private_socket(catalog, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "path_kind, message", [("ascii", "107 bytes"), ("utf8", "107 bytes"), ("nul", "NUL")]
+)
+def test_private_helpers_reject_unusable_socket_path_before_host_setup(
+    catalog, monkeypatch, path_kind, message
+):
+    if path_kind == "nul":
+        directory = catalog.data / "bad\0name"
+    else:
+        padding = 108 - len(os.fsencode(catalog.data / "usbmuxd.sock")) - 1
+        component = "é" + "a" * (padding - 2) if path_kind == "utf8" else "a" * padding
+        directory = catalog.data / component
+        assert len(os.fsencode(directory / "usbmuxd.sock")) == 108
+        if path_kind == "utf8":
+            assert len(str(directory / "usbmuxd.sock")) == 107
+    env = {"LIMULATOR_CREATOR_USB_READY": "1", "VPHONE_CREATOR_USB_READY": "0"}
+    helper = creator._USBHelpers(catalog, directory, env, "owned.scope")
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("invalid socket path must be rejected before host setup")
+
+    monkeypatch.setattr(creator, "_apple_devices", unexpected)
+    monkeypatch.setattr(creator, "_sudo", unexpected)
+    monkeypatch.setattr(creator.subprocess, "Popen", unexpected)
+    with pytest.raises(ValueError, match=message):
+        helper.start()
+    assert env == {"LIMULATOR_CREATOR_USB_READY": "1", "VPHONE_CREATOR_USB_READY": "0"}
+    assert helper.daemon is None
+    assert helper.rule_created is False
+
+
+@pytest.mark.parametrize("socket_path_bytes", [None, 107])
+def test_private_helpers_publish_native_ready_only_after_private_socket(
+    catalog, tmp_path, monkeypatch, socket_path_bytes
+):
+    if socket_path_bytes is not None:
+        padding = socket_path_bytes - len(os.fsencode(catalog.data / "usbmuxd.sock")) - 1
+        tmp_path = catalog.data / ("a" * padding)
+        tmp_path.mkdir(parents=True)
+        assert len(os.fsencode(tmp_path / "usbmuxd.sock")) == socket_path_bytes
     env = {"LIMULATOR_CREATOR_USB_READY": "1", "VPHONE_CREATOR_USB_READY": "0"}
     helper = creator._USBHelpers(catalog, tmp_path, env, "owned.scope")
     assert env == {"LIMULATOR_CREATOR_USB_READY": "1", "VPHONE_CREATOR_USB_READY": "0"}
