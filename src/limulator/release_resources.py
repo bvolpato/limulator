@@ -50,6 +50,86 @@ def lock_transport_file(path: Path, owner: int) -> int:
         raise
 
 
+def _private_data_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        parent = path.parent.stat()
+    except OSError as error:
+        raise ReleaseError(f"Runtime directory parent is unavailable: {path.parent}") from error
+    _require(stat.S_ISDIR(parent.st_mode), f"Runtime directory parent is not a directory: {path.parent}")
+    _require(
+        not (parent.st_mode & 0o022) or parent.st_mode & stat.S_ISVTX,
+        f"Runtime directory parent permits unsafe replacement: {path.parent}",
+    )
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        _require(
+            stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid(),
+            f"Runtime directory is not owned by this user: {path}",
+        )
+        entry = path.lstat()
+        _require(
+            (info.st_dev, info.st_ino) == (entry.st_dev, entry.st_ino),
+            f"Runtime directory changed while opening: {path}",
+        )
+        os.fchmod(descriptor, 0o700)
+        info = os.fstat(descriptor)
+        entry = path.lstat()
+        _require(
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) == 0o700
+            and (info.st_dev, info.st_ino) == (entry.st_dev, entry.st_ino),
+            f"Runtime directory changed while securing it: {path}",
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _lock_data_creation_file(path: Path, owner: int) -> int:
+    descriptor = os.open(
+        path,
+        os.O_CREAT | os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    try:
+        info = os.fstat(descriptor)
+        _require(
+            stat.S_ISREG(info.st_mode) and info.st_uid == owner and info.st_nlink == 1,
+            f"Creation lock has unsafe type or ownership: {path}",
+        )
+        entry = path.lstat()
+        _require(
+            (info.st_dev, info.st_ino) == (entry.st_dev, entry.st_ino),
+            f"Creation lock changed while opening: {path}",
+        )
+        os.fchmod(descriptor, 0o600)
+        info = os.fstat(descriptor)
+        entry = path.lstat()
+        _require(
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == owner
+            and info.st_nlink == 1
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and (info.st_dev, info.st_ino) == (entry.st_dev, entry.st_ino),
+            f"Creation lock changed while securing it: {path}",
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("another guest creation owns the shared restore transport") from error
+        entry = path.lstat()
+        _require(
+            (info.st_dev, info.st_ino) == (entry.st_dev, entry.st_ino),
+            f"Creation lock changed while locking: {path}",
+        )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def host_creation_lock(path: Path, initialize) -> int:
     try:
         return lock_transport_file(path, 0)
@@ -368,14 +448,9 @@ def record_release(data: Path, backend: Path, spec: dict) -> None:
 
 
 def install_release(data: Path, backend: Path, spec: dict) -> None:
+    _private_data_directory(data)
     lock = data / ".creation.lock"
-    try:
-        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        os.close(descriptor)
-    data_guard = lock_transport_file(lock, os.getuid())
+    data_guard = _lock_data_creation_file(lock, os.getuid())
     try:
         host_guard = host_creation_lock(
             HOST_CREATION_LOCK,

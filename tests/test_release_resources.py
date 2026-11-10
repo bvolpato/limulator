@@ -285,6 +285,87 @@ def test_install_holds_creation_locks_through_setup_and_receipt(tmp_path, monkey
         os.close(resources.lock_transport_file(lock, os.getuid()))
 
 
+def test_install_migrates_creator_lock_created_with_group_umask(tmp_path, monkeypatch):
+    data, backend, spec, folder = cohort(tmp_path)
+    lock = data / ".creation.lock"
+    previous_umask = os.umask(0o002)
+    try:
+        with lock.open("a"):
+            pass
+    finally:
+        os.umask(previous_umask)
+    original = lock.stat()
+    assert original.st_mode & 0o777 == 0o664
+    with pytest.raises(RuntimeError, match="unsafe ownership or permissions"):
+        resources.lock_transport_file(lock, os.getuid())
+
+    host_lock = tmp_path / "host.lock"
+    host_lock.touch(mode=0o600)
+    monkeypatch.setattr(
+        resources,
+        "host_creation_lock",
+        lambda *_args: resources.lock_transport_file(host_lock, os.getuid()),
+    )
+    calls = []
+
+    def setup(command, *, env, check, pass_fds):
+        assert {os.fstat(fd).st_ino for fd in pass_fds} == {
+            original.st_ino,
+            host_lock.stat().st_ino,
+        }
+        calls.append(command)
+
+    monkeypatch.setattr(resources.subprocess, "run", setup)
+    with lock.open("a") as existing_creator_guard:
+        fcntl.flock(existing_creator_guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="another guest creation owns"):
+            resources.install_release(data, backend, spec)
+        busy = lock.stat()
+        assert (busy.st_dev, busy.st_ino) == (original.st_dev, original.st_ino)
+        assert busy.st_mode & 0o777 == 0o600
+        assert not calls
+
+    resources.install_release(data, backend, spec)
+
+    secured = lock.stat()
+    assert (secured.st_dev, secured.st_ino) == (original.st_dev, original.st_ino)
+    assert secured.st_mode & 0o777 == 0o600
+    assert data.stat().st_mode & 0o777 == 0o700
+    assert calls == [[str(backend / "setup/setup.sh"), "release"]]
+    resources.verify_release(data, backend, spec)
+
+
+@pytest.mark.parametrize("linked", ["symlink", "hardlink"])
+def test_install_refuses_unsafe_existing_creation_lock_without_mutating_target(tmp_path, linked):
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    target = tmp_path / "target"
+    target.write_bytes(b"preserve")
+    target.chmod(0o644)
+    lock = data / ".creation.lock"
+    if linked == "symlink":
+        lock.symlink_to(target)
+    else:
+        os.link(target, lock)
+    before = target.stat()
+
+    if linked == "symlink":
+        with pytest.raises(OSError):
+            resources.install_release(data, tmp_path / "backend", {})
+    else:
+        with pytest.raises(resources.ReleaseError, match="unsafe type or ownership"):
+            resources.install_release(data, tmp_path / "backend", {})
+
+    after = target.stat()
+    assert target.read_bytes() == b"preserve"
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert after.st_mode & 0o777 == 0o644
+    if linked == "symlink":
+        assert lock.is_symlink()
+    else:
+        assert lock.stat().st_nlink == 2
+
+
 @pytest.mark.parametrize("installed", [False, True], ids=["source", "installed"])
 def test_bootstrap_selects_locked_version_and_preserves_legacy_cache(tmp_path, installed):
     if not shutil.which("uv") or not shutil.which("jq") or not shutil.which("unzip"):
