@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from . import _creation_cleanup
+from . import _creation_cleanup, _first_boot_check
 from .graphics import (
     DEFAULT_GRAPHICS_MODE,
     apply_graphics_environment,
@@ -1426,10 +1426,30 @@ def _pipeline(
     if vm.exists() and any(vm.iterdir()) and (not old or old.get("specification") != specification):
         raise RuntimeError(f"existing VM data has no matching creation receipt; preserving {vm}")
     expected_migration_build = _expected_migration_build(profile, pairing)
+    if env.get("VPHONE_FIRST_BOOT_CHECK"):
+        raise RuntimeError("VPHONE_FIRST_BOOT_CHECK is managed by Limulator during guest creation")
+    first_boot_contract = _first_boot_check.backend_contract(paths.backend)
+    historical_check = None
+    if first_boot_contract["mode"] == "caller-check-v1" and "booted" in _completed(vm):
+        historical_check = _first_boot_check.verify_proof(
+            old.get("first_boot_check") if old else None,
+            vm,
+            specification,
+            expected_migration_build,
+            profile.id,
+            contract=first_boot_contract,
+            historical=True,
+        )
     _private_directory(vm)
     state = dict(old) if old else {"specification": specification, "completed": []}
     state.pop("error", None)
     state.pop("first_boot_qmp", None)
+    if first_boot_contract["mode"] == "caller-check-v1":
+        state.pop("scope_invocation_id", None)
+        state.pop("launcher", None)
+    state["backend_first_boot_contract"] = first_boot_contract
+    if historical_check is not None:
+        state["first_boot_check_historical"] = historical_check
     state.update(
         state="creating",
         process=_identity(os.getpid()),
@@ -1535,6 +1555,24 @@ def _pipeline(
             )
         _apply_profile_configuration(vm, profile, int(candidate.scale))
         _archive_creation_logs(vm, run_dir)
+        deadline = time.monotonic() + 3 * 3600
+        if first_boot_contract["mode"] == "caller-check-v1":
+            check = _first_boot_check.prepare(
+                run_dir,
+                vm,
+                specification,
+                profile.id,
+                expected_migration_build,
+                state["process"],
+                unit,
+                env["QEMU"],
+                first_boot_contract,
+                deadline,
+                env,
+            )
+            env["VPHONE_FIRST_BOOT_CHECK"] = check["launcher"]
+            state["first_boot_check"] = check
+            _atomic_json(state_path, state)
         helpers.start()
         _sudo_shim(run_dir, env)
         command = [
@@ -1581,7 +1619,6 @@ def _pipeline(
             )
         state["launcher"] = _identity(process.pid)
         _atomic_json(state_path, state)
-        deadline = time.monotonic() + 3 * 3600
         previous = None
         while process.poll() is None:
             if not scope_owned:
@@ -1616,6 +1653,12 @@ def _pipeline(
             raise RuntimeError(f"upstream creation exited with status {process.returncode}; see {log_path}")
         if "booted" not in _completed(vm):
             raise RuntimeError("upstream returned without a completed first boot")
+        if first_boot_contract["mode"] == "caller-check-v1":
+            state["first_boot_check"] = _first_boot_check.verify_proof(
+                state["first_boot_check"], vm, specification, expected_migration_build, profile.id,
+                contract=first_boot_contract,
+            )
+            _atomic_json(state_path, state)
         guest = GuestClient(cid=candidate.cid, timeout=30)
         state.update(stage="verification-setup")
         _atomic_json(state_path, state)

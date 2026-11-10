@@ -247,6 +247,11 @@ def test_creation_rechecks_pending_cache_under_disk_ownership_before_resume_or_h
         return fd
 
     monkeypatch.setattr(creator, "_lock_disk", journal_appears)
+    monkeypatch.setattr(
+        creator._first_boot_check,
+        "backend_contract",
+        lambda _backend: {"mode": "legacy-strict", "revision": creator._first_boot_check._LEGACY},
+    )
     monkeypatch.setattr(creator, "_verified_firmware_stage", lambda *_: [])
     monkeypatch.setattr(creator, "_unit_states", lambda: {})
     monkeypatch.setattr(creator, "_first_boot_qmp_path", lambda *_: fixture.runtime.paths.data / "qmp.sock")

@@ -46,6 +46,11 @@ def catalog(tmp_path, monkeypatch):
         creator, "_host_creation_lock", lambda env: creator._lock_transport_file(host_lock, os.getuid())
     )
     monkeypatch.setattr(creator, "_active_vhost_cids", lambda: {})
+    monkeypatch.setattr(
+        creator._first_boot_check,
+        "backend_contract",
+        lambda _backend: {"mode": "legacy-strict", "revision": creator._first_boot_check._LEGACY},
+    )
     # Keep unrelated pipeline fixtures below the real Unix-socket path limit on CI too.
     with tempfile.TemporaryDirectory(prefix="lim-cr-", dir="/tmp") as temporary:
         yield Paths(creator.Path(temporary) / "data")
