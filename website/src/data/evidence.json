@@ -2,8 +2,8 @@
   "release": {
     "status": "research-preview",
     "label": "Public research preview",
-    "detail": "iPhone smoke + Duo native trials · full acceptance pending",
-    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a 666.58-second pause. One controlled cold boot also reached BruTV Home and returned an unmodified native cover capture. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup, general app performance, and complete profile acceptance remain pending."
+    "detail": "iPhone smoke + Duo and iPad native trials · full acceptance pending",
+    "publicStatus": "Source is public as a research preview. The iPhone 16 profile scenario and CounterLab smoke passed. One closed-Duo session rendered local fixture video and recovered playback after a long pause. A controlled cold boot reached BruTV Home. An iPad mini guest completed migration, launched CounterLab built with SDK 27.2, displayed the expected UIKit metrics and responded to QMP virtual touchscreen input. A separate experimental worker trial in diagnostic graphics returned matching display bounds, and a read-only scale check confirmed no change was needed. Automated iPad inspection remains blocked by unknown FrontBoard orientation. Clean creation, repeatable cold startup, general app performance and complete profile acceptance remain pending."
   },
   "guest": {
     "label": "iPhone 16 compatible run",
@@ -27,14 +27,14 @@
     "status": "acceptance-pending",
     "value": "Selected native checks passed",
     "proofLabel": "NATIVE APP CHECKS PASSED",
-    "workflowValue": "iPhone smoke + Duo native trials",
-    "captureValue": "7 iPhone and Duo captures",
-    "detail": "The 26-step compatible-graphics CounterLab smoke passed in one iPhone 16 run. A separate closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. This is one recovery trial, not a general playback or app-performance result. One controlled cold boot reached BruTV Home and returned an unmodified native cover capture; repeated cold startup remains unverified. iPad framebuffer density and ProgressUI screen classification now match the profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation. Repeatable cold startup and complete iPhone, Duo, and iPad acceptance remain pending.",
-    "faq": "The 26-step CounterLab smoke passed on one compatible-graphics iPhone 16 guest. One closed-Duo session rendered BruTV's local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, with source counters advancing in later captures. This does not establish broad playback reliability or app performance. One controlled cold boot also reached BruTV Home and returned a native cover capture. The iPad's native framebuffer density and ProgressUI screen classification now match its profile after cache refresh and reboot. Fresh creation, migration, repeatable cold startup, and complete profile acceptance remain pending."
+    "workflowValue": "iPhone smoke + Duo and iPad trials",
+    "captureValue": "9 iPhone, Duo and iPad captures",
+    "detail": "CounterLab smoke passed on one iPhone 16 guest. A closed-Duo session rendered local H.264 HLS video and recovered after a long pause; one controlled cold boot reached BruTV Home. On iPad mini, an SDK 27.2 app visibly reported iPadOS 27.0.1, the iPad idiom, 744 × 1133 points and 2× scale. A separate experimental worker trial in diagnostic graphics returned matching FrontBoard bounds, and one QMP virtual USB touchscreen tap changed the count from 1 to 2. A guarded read-only scale check returned unchanged 2× scale without restart. These results show guest UI and input, not GPU fidelity or performance. Automated iPad inspection still refuses unknown FrontBoard orientation. The iPhone migration failure, repeatable cold startup and complete profile acceptance remain open.",
+    "faq": "Native checks include iPhone CounterLab smoke, one closed-Duo video recovery trial, BruTV Home after one cold boot, and iPad CounterLab metrics and QMP touchscreen input. The iPad trial used diagnostic graphics and does not establish GPU fidelity or performance. A guarded read-only scale check returned unchanged 2× scale without restart. Automated inspection still refuses unknown FrontBoard orientation. These trials do not establish complete device acceptance or repeatable cold startup."
   },
-  "workflowNote": "CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone 16 profile scenario and 26-step CounterLab smoke passed. One closed-Duo BruTV session recovered local fixture playback 3.28 seconds after a 666.58-second pause. A separate controlled cold boot reached BruTV Home and returned a native cover capture. The iPad's display classification now matches its profile in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete profile acceptance remain pending.",
+  "workflowNote": "CounterLab builds with SDK 27.2. Native checks cover iPhone smoke, selected Duo playback and cold-start behavior, and an iPad app displaying the expected UIKit metrics and responding to a QMP touchscreen tap. A separate experimental worker trial in diagnostic graphics returned matching display metrics; a guarded read-only scale check made no change and required no restart. Automated iPad inspection remains blocked by its FrontBoard orientation report. Complete creation, repeatable cold startup and full profile acceptance remain pending.",
   "faq": {
-    "release": "The public preview includes a passed iPhone 16 profile scenario and CounterLab smoke, one closed-Duo BruTV fixture playback and recovery trial, a native BruTV Home capture after one controlled cold boot, and partial iPad display-classification recovery. These checks do not establish repeatable cold startup, general app performance, or complete device acceptance. DataMigrator success: false still blocks clean creation."
+    "release": "The public preview has native iPhone, Duo and iPad evidence. The iPad completed migration and ran CounterLab with the expected UIKit metrics. One experimental worker trial in diagnostic graphics returned matching display metrics, and a guarded read-only scale check made no change. Automated UI inspection is still blocked. The iPhone migration failure, repeatable cold startup, app performance and complete device acceptance remain open."
   },
   "nativeObservation": {
     "compatibleRun": {
@@ -153,6 +153,33 @@
       "accepted": false
     },
     {
+      "file": "assets/native/counterlab-ipad-mini-native-profile-tap-2026-11-09.png",
+      "title": "CounterLab · native iPad metrics and touch",
+      "alt": "CounterLab on iPad mini reports iPadOS 27.0.1, the iPad idiom, 744 by 1133 points and 2x scale, with the count at 1 after QMP touchscreen input.",
+      "context": "An SDK 27.2 app ran on the iPad mini guest in diagnostic graphics and responded to QMP virtual USB touchscreen input. Its visible UIKit metrics match the profile. This shows guest UI and input, not GPU fidelity or performance. Automated inspection still refuses unknown FrontBoard orientation; full acceptance remains pending.",
+      "device": "iPad mini (A17 Pro) · iPad16,1",
+      "os": "iPadOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 744 × 1133 pt @ 2×",
+      "graphicsMode": "diagnostic",
+      "sha256": "2b03a50fef4ff239dac9c8e82c187f0612a79476d9319207882c810feac413c6",
+      "provenance": "Direct 1488 × 2266 pixel QMP framebuffer capture, 9 Nov 2026, after one QMP virtual USB touchscreen tap changed CounterLab from 0 to 1. Reims census was enabled, so this diagnostic-graphics frame shows guest UI and input only. It does not establish GPU fidelity or performance. Original image bytes, no resize or rotation; no automated profile scenario passed.",
+      "accepted": false
+    },
+    {
+      "file": "assets/native/counterlab-ipad-mini-fa4-metrics-tap-2026-11-09.png",
+      "title": "CounterLab · experimental iPad display metrics",
+      "alt": "CounterLab on an iPad mini shows a count of 2 and iPadOS 27.0.1, the iPad idiom, 744 by 1133 points and 2× scale.",
+      "context": "A separate experimental worker trial in diagnostic graphics returned matching display bounds. One virtual touchscreen tap changed CounterLab from 1 to 2. This shows guest UI and input, not GPU fidelity or performance. Full acceptance remains pending.",
+      "device": "iPad mini (A17 Pro) · iPad16,1",
+      "os": "iPadOS 27.0.1 · build 24A446",
+      "posture": "Portrait · 744 × 1133 pt @ 2× · 1488 × 2266 px",
+      "sha256": "211e6ad82d9ee52a7bebb8406ef8825ad93137f6848c7fa0fa267dc33bf88eaf",
+      "provenance": "Direct copy of the first unmodified candidate framebuffer after the QMP touchscreen tap, 9 Nov 2026, with Reims census enabled (diagnostic graphics). The fa4 helper backport used source commit 4d236ca442f63fef5565224ca6c4554d415d7cba, CI run 42600598908, artifact 13665064372, and effective runtime worker SHA-256 5696e8c208c4422e5b58f5a90cfd11d882aac37f4c0dbde4bc069c545bb1c667. Candidate QEMU PID 491324 (CID 48); the separate CID 47 original guest remained off and unchanged. The first frame was captured 0.794 seconds after the tap, not an app performance measurement. Original 1488 × 2266 pixels, no resize or rotation.",
+      "graphicsMode": "diagnostic",
+      "accepted": false,
+      "scenarioPassed": false
+    },
+    {
       "file": "assets/native/counterlab-iphone16-compatible-count-1-after-reboot-2026-11-07.png",
       "title": "CounterLab · count retained after reboot",
       "alt": "CounterLab's main screen on an iPhone 16 guest shows the saved count at 1 after the guest rebooted.",
@@ -255,5 +282,141 @@
       }
     ],
     "scope": "This is a QEMU cache-invalidation microbenchmark. It does not measure app startup, interaction latency, graphics performance, or user-visible speed."
+  },
+  "ipadObservation": {
+    "observedOn": "2026-11-09",
+    "device": "iPad mini (A17 Pro) · iPad16,1",
+    "guestOs": "iPadOS 27.0.1",
+    "firmwareBuild": "24A446",
+    "graphicsMode": "diagnostic",
+    "app": {
+      "bundleId": "com.bvolpato.limulator.counterlab",
+      "sdk": "27.2",
+      "ipaSha256": "379fc3e5311e6eceb82add23cee08f045f5a026eb32f409dd7b23f4ec4769343",
+      "sourceRevision": "e499b2af7c006b90358578b7d1ec2f39f90a3cb9",
+      "installTransport": "files.write RPC; complete files.read hash verified"
+    },
+    "uikit": {
+      "evidence": "Visible app labels in unmodified native framebuffer",
+      "idiom": "iPad",
+      "pointSize": [
+        744,
+        1133
+      ],
+      "scale": 2
+    },
+    "qmpTap": {
+      "transport": "QMP virtual USB touchscreen",
+      "countBefore": 0,
+      "countAfter": 1,
+      "receiptSha256": "2406bc6dc177244040f8bd35cd56f346733f911d7ff1d342fcbdc10b3345c2ff"
+    },
+    "orientation": {
+      "frontBoardRaw": 0,
+      "accessibilitySpringBoardRaw": 1,
+      "accessibilityGetterABI": "q16@0:8",
+      "automatedInspection": "unavailable; no orientation substituted"
+    },
+    "migration": {
+      "success": true,
+      "build": "24A446",
+      "done": true
+    },
+    "softwareProvenance": {
+      "backendRevision": "0dcf8f5854d823c33929a48c483b25875987fbf8",
+      "vphoneCliRevision": "fa4c3b0adbb38c8eca0b62f3a7ef553ed6eb3825",
+      "icliRevision": "82d54abb97901ccceb36c748b066202837952116",
+      "qemuRevision": "7e7290a51877ece745c36b084b42df42ca07bb7f",
+      "qemuSha256": "f31e3023691f7fba2fc989fb0472f4d8135ffddef195aa760ef4c173a232c5a4",
+      "installedWorkerSha256": "5184911dc547d5a6d5942140a6ea1dd77557a1bbb11e399b578e816c16137753",
+      "qemuGraphicsEnvironment": {
+        "REIMS_VGPU_CENSUS_DIR": "set",
+        "REIMS_VGPU_STRICT": "unset",
+        "REIMS_VGPU_EXACT": "unset"
+      }
+    },
+    "profileScenarioPassed": false,
+    "creationAccepted": false,
+    "defaultDependenciesChanged": false,
+    "limits": [
+      "Single preserved-guest trial",
+      "Automated inspection and full iPad scenario remain blocked",
+      "Large binary-stream uploads failed; their cause remains under investigation",
+      "No repeatability or performance claim"
+    ],
+    "experimentalMetricsCandidate": {
+      "sourceRevision": "4d236ca442f63fef5565224ca6c4554d415d7cba",
+      "sourceScope": "Minimal display.metrics helper backport on fa4; not the complete modern PR #879 bundle",
+      "ciRun": 42600598908,
+      "ciArtifact": 13665064372,
+      "guestCid": 48,
+      "originalGuestCid": 47,
+      "originalGuestUntouched": true,
+      "qemuPid": 491324,
+      "graphicsMode": "diagnostic",
+      "censusEnabled": true,
+      "preApplyDependencyTimeoutRecoveredOnOriginalWorker": true,
+      "originalRuntimeInstance": "33B23DCC-D0E6-4BAE-8934-AE337CE08C7A",
+      "runtimeInstance": "3A810446-993B-4423-991F-D628E597D818",
+      "runtimeWorkerSha256": "5696e8c208c4422e5b58f5a90cfd11d882aac37f4c0dbde4bc069c545bb1c667",
+      "candidateApplyCount": 1,
+      "healthStatus": "ok",
+      "displayMetrics": {
+        "available": true,
+        "source": "frontboard_default_main",
+        "displayId": 1,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 744,
+          "height": 1133
+        },
+        "referenceBounds": {
+          "x": 0,
+          "y": 0,
+          "width": 744,
+          "height": 1133
+        },
+        "pointScale": 2
+      },
+      "qmpTap": {
+        "transport": "QMP virtual USB touchscreen",
+        "countBefore": 1,
+        "countAfter": 2,
+        "firstFrameSecondsAfterTap": 0.7937447630101815,
+        "performanceMeasurement": false,
+        "captureSha256": "211e6ad82d9ee52a7bebb8406ef8825ad93137f6848c7fa0fa267dc33bf88eaf"
+      },
+      "frontBoardOrientationRaw": 0,
+      "deviceScreenReadError": "HTTP 400: Active interface geometry is unavailable: FrontBoard returned no usable layout",
+      "fullProfileScenarioPassed": false,
+      "normalBootAccepted": false,
+      "defaultDependenciesChanged": false
+    },
+    "nativeScaleNoopConsumer": {
+      "receipt": "pr54-readonly-noop-1794227337683368971.json",
+      "receiptSha256": "e27065b6b47e2064da5fb2cb7a6a5f15f8a5b17558b0bffa3fb4b62a0af58dde",
+      "toolRevision": "5a6206130d039799ba5a7a07b6797522011b4cd7",
+      "moduleSha256": "be0e0219d182ef8a36c857a74100f617ab2f80e027ded7971df0cbb41294fa4a",
+      "result": {
+        "changed": false,
+        "scale": 2,
+        "restart_required": false
+      },
+      "deviceTreeRead": {
+        "size": 78125,
+        "sha256": "ef44d4e54e3bd46853b8bb41df89173390da2212be422164bea5b15ae8765154",
+        "preAndPostHashEqual": true
+      },
+      "mobileGestaltEntry": {
+        "before": "absent",
+        "after": "absent",
+        "proof": "exact404-and-complete-parent-listing",
+        "cacheBytesRead": false
+      },
+      "guestMutationDispatched": false,
+      "hostBackupWritten": false,
+      "creationAccepted": false
+    }
   }
 }

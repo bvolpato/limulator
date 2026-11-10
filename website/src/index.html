@@ -136,10 +136,10 @@
             <p class="step-kicker">OBSERVE</p>
             <h3>Input &amp; capture</h3>
             <p>Tap, type, check app state and save genuine frames from the guest for repeatable review.</p>
-            <span class="step-state" data-workflow-step="capture">7 iPhone and Duo captures</span>
+            <span class="step-state" data-workflow-step="capture">9 iPhone, Duo and iPad captures</span>
           </article>
         </div>
-        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>CounterLab's warm Release build took 3.03 seconds with SDK 27.2; that is build time, not app performance. The iPhone profile scenario and 26-step smoke passed. One closed-Duo BruTV trial recovered local fixture playback after a long pause. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
+        <div class="workflow-footnote"><span class="footnote-mark">i</span><p data-workflow-note>CounterLab builds with SDK 27.2. Native checks cover iPhone smoke, selected Duo playback and cold-start behavior, and an iPad app displaying the expected UIKit metrics and responding to a QMP touchscreen tap. A separate experimental worker trial also returned matching display metrics. Automated iPad inspection remains blocked by its FrontBoard orientation report. Complete creation, repeatable cold startup and full profile acceptance remain pending.</p><a href="#evidence">See evidence boundary <span aria-hidden="true">↗</span></a></div>
       </section>
 
       <section id="profiles" class="profile-section" aria-labelledby="profiles-title">
@@ -182,7 +182,7 @@
                     <div><dt>Software postures</dt><dd data-profile-postures>Single display · iPhone profile checked</dd></div>
                     <div data-inner-display-row hidden><dt>Inner display</dt><dd data-profile-inner-display></dd></div>
                   </dl>
-                  <p class="profile-note" data-profile-note>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. The smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode input, Home, and count persistence after app relaunch. One closed-Duo trial recovered local fixture playback after a long pause. iPad display classification recovered in a preserved guest. DataMigrator success: false still blocks clean creation; repeatable cold startup and complete device acceptance remain pending.</p>
+                  <p class="profile-note" data-profile-note>The compatible-graphics iPhone profile scenario and 26-step CounterLab smoke passed. The smoke verified counter actions, semantic scrolling and taps, Details navigation, Unicode input, Home, and count persistence after app relaunch. One closed-Duo trial recovered local fixture playback after a long pause. An iPad mini trial showed expected UIKit metrics and QMP touch input in diagnostic graphics; a separate experimental worker trial returned matching display metrics. A read-only scale check made no change. Automated iPad inspection and full profile acceptance remain pending.</p>
                 </div>
                 <div class="profile-graphic">
                   <div class="graphic-label"><span>DISPLAY MAP</span><span>CONCEPTUAL · NOT TO SCALE</span></div>
@@ -213,7 +213,7 @@
         <div class="evidence-board">
           <div class="evidence-board-head">
             <div><span class="evidence-overline">NATIVE CAPTURE ARCHIVE</span><h3>iOS guest frames</h3></div>
-            <span class="archive-count" data-capture-count>7 captures</span>
+            <span class="archive-count" data-capture-count>9 captures</span>
           </div>
           <div class="capture-grid" data-capture-grid>
             <div class="capture-empty">
@@ -222,7 +222,7 @@
                 <svg viewBox="0 0 64 64" fill="none"><rect x="11" y="13" width="42" height="38" rx="5"/><circle cx="32" cy="32" r="8"/><path d="m17 47 11-10 7 6 5-5 7 9"/></svg>
                 <span>ARCHIVE LOADING</span>
               </div>
-              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native evidence archive</span><h4>Loading the guest captures.</h4><p>CounterLab frames document a passed iPhone smoke. Closed-Duo images show fixture playback and BruTV Home after one controlled cold boot. Each image carries its profile and validation limits.</p></div>
+              <div class="empty-copy"><span class="empty-tag"><i class="status-pip pip-amber"></i> Native evidence archive</span><h4>Loading the guest captures.</h4><p>CounterLab frames document iPhone smoke and iPad metrics and touch checks. The newest iPad frame comes from an isolated experimental helper backport; automated display inspection and full profile acceptance remain pending. Closed-Duo images show fixture playback and BruTV Home after one controlled cold boot.</p></div>
             </div>
           </div>
           <div class="evidence-board-foot"><span>Capture source: local iOS guest framebuffer</span><span data-capture-footnote>Native frame source and profile metadata are recorded.</span></div>
@@ -353,7 +353,7 @@ uv run limulator doctor</code></pre>
             </details>
             <details>
               <summary>Is the native app workflow already proven?<span aria-hidden="true">+</span></summary>
-              <p data-faq-runtime>The 26-step compatible-graphics CounterLab smoke passed on one iPhone 16 guest. One closed-Duo BruTV session rendered its local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. That is one recovery case, not proof of broad playback reliability or app performance. The iPad's native display classification now matches its profile after cache refresh and reboot. DataMigrator success: false still blocks clean creation; repeatable cold startup and full profile acceptance remain pending.</p>
+              <p data-faq-runtime>The 26-step compatible-graphics CounterLab smoke passed on one iPhone 16 guest. One closed-Duo BruTV session rendered its local H.264 HLS fixture; physical Play restored video 3.28 seconds after a 666.58-second pause, and source counters advanced in later captures. That is one recovery case, not proof of broad playback reliability or app performance. On iPad, a separate experimental worker trial in diagnostic graphics returned matching display metrics; a guarded read-only scale check made no change. Automated inspection remains blocked by FrontBoard orientation. DataMigrator success: false still blocks clean creation; repeatable cold startup and full profile acceptance remain pending.</p>
             </details>
             <details>
               <summary>Can I use any iPhone, iPad, or App Store app?<span aria-hidden="true">+</span></summary>
