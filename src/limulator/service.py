@@ -256,11 +256,13 @@ class DeviceService:
                 qmp.tap(raw_x, raw_y, frame.raw_width, frame.raw_height)
             return {"sent": True}
 
-    def tap_element(self, identifier: str) -> dict:
+    def tap_element(self, identifier: str, *, timeout: float = 60) -> dict:
         if not isinstance(identifier, str) or not 1 <= len(identifier) <= 1024 or "\0" in identifier:
             raise DeviceError("An accessibility identifier of 1 to 1024 characters is required")
         with self._interaction():
-            return self.runtime.guest().rpc("ui.tap_element", {"identifier": identifier, "match": "exact"})
+            return self.runtime.guest(timeout=timeout).rpc(
+                "ui.tap_element", {"identifier": identifier, "match": "exact"}
+            )
 
     def swipe(
         self,

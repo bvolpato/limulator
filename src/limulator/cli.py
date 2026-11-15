@@ -347,6 +347,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.graphics_mode is not None:
                 options["graphics_mode"] = args.graphics_mode
             result = runtime.start(**options)
+            _print(result)
+            if result["state"] == "running" or (args.wait == 0 and result["state"] == "booting"):
+                return 0
+            return 1
         elif args.command == "stop":
             result = runtime.stop()
         elif args.command == "status":

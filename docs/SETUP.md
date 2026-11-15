@@ -114,6 +114,8 @@ uv run limulator --device duo start --wait 600
 uv run limulator --device duo stop
 ```
 
+`start --wait` returns a nonzero exit status if startup fails or the guest is still booting when the wait expires. It retains the structured status output for diagnosis. Without a positive wait, a successfully launched guest may still be booting and returns success.
+
 `start --window` opens the native emulator window with Home, Lock, volume, and Screenshot controls to the right of the device. Home wakes and swipes a locked phone; on an unlocked phone it sends Home. Power wakes a sleeping display or sends the virtual side-button action. Passcodes require your input. Screenshots save only when you press Screenshot. The toolbar uses the private control socket of that run and ends with its emulator. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
 
 In the console, the destination picker lists registered devices and profiles that can be created. Selecting a registered device shows its OS, geometry, support status, and named Start and Stop controls. Stop waits for the owned guest to shut down and rejects duplicate requests while it is in progress. Duo alone exposes fold controls. Selecting a profile without a registered device shows a copyable creation command; creation and firmware downloads run through the terminal. Refresh the picker after registering or creating a device.
@@ -175,6 +177,8 @@ uv run limulator test examples/CounterLab/scenarios/duo.json --output artifacts/
 ```
 
 Each run requires a new output directory. It writes `report.json` and genuine guest PNGs with hashes. A failed assertion produces a failing command and attempts a failure capture. If capture itself fails, the report records the error without inventing an image.
+
+The scenario `tap_element` action accepts an optional `timeout` in seconds, defaulting to 60 and capped at 120. It retries only the pinned guest's exact accessibility-readiness errors that occur before HID dispatch. All attempts share that deadline. A successful tap is sent once; transport timeouts, HID failures, and unknown errors stop the action because input may already have been delivered.
 
 The report records the runtime's `graphics_policy`, including its mode and inherited `REIMS_VGPU_EXACT` setting when known. It does not infer historical settings from the current shell. A passing scenario establishes its tested UI behavior, not full Metal equivalence; retain the backend stderr warnings with acceptance evidence.
 

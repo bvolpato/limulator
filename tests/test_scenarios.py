@@ -88,7 +88,7 @@ class FakeService:
     def tap(self, *args: Any) -> dict[str, Any]:
         return self._input("tap", *args)
 
-    def tap_element(self, *args: Any) -> dict[str, Any]:
+    def tap_element(self, *args: Any, timeout: float = 60) -> dict[str, Any]:
         return self._input("tap_element", *args)
 
     def swipe(self, *args: Any) -> dict[str, Any]:
@@ -134,6 +134,21 @@ class ScriptedTreeService(FakeService):
         response = self.responses[min(self.tree_calls - 1, len(self.responses) - 1)]
         if isinstance(response, Exception):
             raise response
+        return response
+
+
+class ScriptedTapService(FakeService):
+    def __init__(self, responses: list[Any]) -> None:
+        super().__init__()
+        self.responses = responses
+        self.tap_timeouts: list[float] = []
+
+    def tap_element(self, identifier: str, *, timeout: float = 60) -> dict[str, Any]:
+        self.tap_timeouts.append(timeout)
+        response = self.responses[min(len(self.tap_timeouts) - 1, len(self.responses) - 1)]
+        if isinstance(response, Exception):
+            raise response
+        self._input("tap_element", identifier)
         return response
 
 
@@ -664,6 +679,14 @@ def test_report_keeps_recorded_graphics_policy_on_action_failure(
             "step 1 identifier",
         ),
         (
+            '{"version":1,"steps":[{"action":"tap_element","identifier":"target","timeout":0}]}',
+            "tap timeout must be greater than 0 and at most 120",
+        ),
+        (
+            '{"version":1,"steps":[{"action":"tap_element","identifier":"target","timeout":121}]}',
+            "tap timeout must be greater than 0 and at most 120",
+        ),
+        (
             '{"version":1,"steps":[{"action":"assert_text","text":"1","exact":1}]}',
             "exact must be a boolean",
         ),
@@ -832,9 +855,13 @@ _SCENE_READINESS_MESSAGE = (
     "Active interface geometry is unavailable: "
     "Foreground bundle or its unique scene could not be verified within the display bounds"
 )
+_FRONTMOST_READINESS_MESSAGE = "frontmost application could not be verified"
 
 
-@pytest.mark.parametrize("message", ["AX element query failed (-25215)", "AX element query failed (-25216)"])
+@pytest.mark.parametrize(
+    "message",
+    ["AX element query failed (-25215)", "AX element query failed (-25216)", _FRONTMOST_READINESS_MESSAGE],
+)
 def test_wait_text_retries_ax_readiness_error_until_text_is_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
 ) -> None:
@@ -855,8 +882,9 @@ def test_wait_text_retries_ax_readiness_error_until_text_is_available(
     assert len(service.tree_timeouts) == 2
 
 
+@pytest.mark.parametrize("message", ["AX element query failed (-25216)", _FRONTMOST_READINESS_MESSAGE])
 def test_wait_text_bounds_persistent_ax_readiness_errors_by_deadline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
 ) -> None:
     now = [10.0]
     monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
@@ -865,15 +893,13 @@ def test_wait_text_bounds_persistent_ax_readiness_errors_by_deadline(
         tmp_path,
         {"version": 1, "steps": [{"action": "wait_text", "text": "Ready", "timeout": 0.51}]},
     )
-    service = ScriptedTreeService([_ax_readiness_error()])
+    service = ScriptedTreeService([_ax_readiness_error(message)])
 
-    with pytest.raises(
-        ScenarioError, match="last AX readiness error: AX element query failed \\(-25216\\)"
-    ) as error:
+    with pytest.raises(ScenarioError, match="timed out waiting for visible text") as error:
         run_scenario(service, path, tmp_path / "ax-unavailable")
 
     report = json.loads(error.value.report_path.read_text(encoding="utf-8"))
-    assert report["failure"]["error"].endswith("last AX readiness error: AX element query failed (-25216)")
+    assert report["failure"]["error"].endswith(f"last AX readiness error: {message}")
     assert report["screenshots"][0]["role"] == "failure"
     assert (error.value.report_path.parent / "screenshots" / "failure.png").is_file()
     assert service.tree_calls == 3
@@ -890,6 +916,9 @@ def test_wait_text_bounds_persistent_ax_readiness_errors_by_deadline(
         (400, "failed", _SCENE_READINESS_MESSAGE),
         (400, "unavailable", "Active interface geometry is unavailable: No current layout"),
         (None, "unavailable", _SCENE_READINESS_MESSAGE),
+        (500, "failed", _FRONTMOST_READINESS_MESSAGE),
+        (400, "unavailable", _FRONTMOST_READINESS_MESSAGE),
+        (400, "failed", _FRONTMOST_READINESS_MESSAGE + ": unknown failure"),
     ],
 )
 @pytest.mark.parametrize(
@@ -958,6 +987,73 @@ def test_tap_element_requires_and_dispatches_semantic_identifier(tmp_path: Path)
 
     assert service.inputs == [("tap_element", ("counterlab.reset",))]
     assert report["steps"][0]["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["AX element query failed (-25215)", "AX element query failed (-25216)", _FRONTMOST_READINESS_MESSAGE],
+)
+def test_tap_element_retries_only_before_input_and_stops_after_success(tmp_path, monkeypatch, message):
+    now = [10.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    path = _write_scenario(
+        tmp_path, {"version": 1, "steps": [{"action": "tap_element", "identifier": "target"}]}
+    )
+    service = ScriptedTapService([_ax_readiness_error(message), {"tapped": True}])
+
+    report = run_scenario(service, path, tmp_path / "tap-ready")
+
+    assert report["status"] == "passed"
+    assert service.tap_timeouts == [60, 59.75]
+    assert service.inputs == [("tap_element", ("target",))]
+
+
+def test_tap_element_bounds_persistent_pre_input_errors(tmp_path, monkeypatch):
+    now = [10.0]
+    monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    path = _write_scenario(
+        tmp_path,
+        {"version": 1, "steps": [{"action": "tap_element", "identifier": "target", "timeout": 0.51}]},
+    )
+    service = ScriptedTapService([_ax_readiness_error()])
+
+    with pytest.raises(ScenarioError, match="timed out waiting to tap AX element") as error:
+        run_scenario(service, path, tmp_path / "tap-unavailable")
+
+    report = json.loads(error.value.report_path.read_text())
+    assert report["failure"]["error"].endswith("last AX readiness error: AX element query failed (-25216)")
+    assert service.tap_timeouts == pytest.approx([0.51, 0.26, 0.01])
+    assert now[0] == pytest.approx(10.51)
+    assert service.inputs == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ProtocolError("transport timed out"),
+        _ax_readiness_error("hid tap unavailable"),
+        _ax_readiness_error("element not found"),
+        _ax_readiness_error("AX element query failed (-25217)"),
+        _ax_readiness_error(status_code=500),
+        _ax_readiness_error(code="unavailable"),
+        _ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable"),
+    ],
+)
+def test_tap_element_does_not_retry_unsafe_or_unconfirmed_errors(tmp_path, failure):
+    path = _write_scenario(
+        tmp_path, {"version": 1, "steps": [{"action": "tap_element", "identifier": "target"}]}
+    )
+    service = ScriptedTapService([failure, {"tapped": True}])
+
+    with pytest.raises(ScenarioError) as error:
+        run_scenario(service, path, tmp_path / "tap-failed")
+
+    report = json.loads(error.value.report_path.read_text())
+    assert report["failure"]["error"] == str(failure)
+    assert len(service.tap_timeouts) == 1
+    assert service.inputs == []
 
 
 def _ax_target(*, identifier="target", x=50, y=75, visible=True):

@@ -334,6 +334,21 @@ def test_screen_queries_native_point_bounds_with_the_requested_timeout():
     assert runtime.client.calls == [("device.screen", None)]
 
 
+def test_tap_element_passes_remaining_deadline_to_guest():
+    runtime = Runtime()
+    timeouts = []
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+    DeviceService(runtime).tap_element("target", timeout=0.75)
+    assert timeouts == [0.75]
+    assert runtime.client.calls == [("ui.tap_element", {"identifier": "target", "match": "exact"})]
+    assert runtime.peer.calls == []
+
+
 def test_hinge_status_reads_the_duo_provider_value_with_the_requested_timeout():
     runtime = Runtime()
     status = {
