@@ -855,6 +855,11 @@ _SCENE_READINESS_MESSAGE = (
     "Active interface geometry is unavailable: "
     "Foreground bundle or its unique scene could not be verified within the display bounds"
 )
+_SCENE_READINESS_MESSAGES = (
+    _SCENE_READINESS_MESSAGE,
+    "Active point geometry is unavailable: a unique oriented default-main display is required",
+    "Cannot bind accessibility coordinates to a unique foreground scene and oriented display",
+)
 _FRONTMOST_READINESS_MESSAGE = "frontmost application could not be verified"
 
 
@@ -1038,7 +1043,7 @@ def test_tap_element_bounds_persistent_pre_input_errors(tmp_path, monkeypatch):
         _ax_readiness_error("AX element query failed (-25217)"),
         _ax_readiness_error(status_code=500),
         _ax_readiness_error(code="unavailable"),
-        _ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable"),
+        *(_ax_readiness_error(message, code="unavailable") for message in _SCENE_READINESS_MESSAGES),
     ],
 )
 def test_tap_element_does_not_retry_unsafe_or_unconfirmed_errors(tmp_path, failure):
@@ -1071,10 +1076,11 @@ def _ax_target(*, identifier="target", x=50, y=75, visible=True):
         ({"action": "scroll_to_element", "identifier": "target", "max_swipes": 0}, _ax_target()),
     ],
 )
-def test_ui_reads_retry_scene_readiness_without_input(tmp_path, monkeypatch, action, tree):
+@pytest.mark.parametrize("message", _SCENE_READINESS_MESSAGES)
+def test_ui_reads_retry_scene_readiness_without_input(tmp_path, monkeypatch, action, tree, message):
     monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: None)
     path = _write_scenario(tmp_path, {"version": 1, "steps": [{**action, "timeout": 1}]})
-    service = ScriptedTreeService([_ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable"), tree])
+    service = ScriptedTreeService([_ax_readiness_error(message, code="unavailable"), tree])
 
     report = run_scenario(service, path, tmp_path / "scene-ready")
 
@@ -1086,7 +1092,8 @@ def test_ui_reads_retry_scene_readiness_without_input(tmp_path, monkeypatch, act
         assert report["steps"][0]["result"]["swipes"] == 0
 
 
-def test_scroll_scene_readiness_deadline_preserves_original_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("message", _SCENE_READINESS_MESSAGES)
+def test_scroll_scene_readiness_deadline_preserves_original_error(tmp_path, monkeypatch, message):
     now = [10.0]
     monkeypatch.setattr(scenarios.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(scenarios.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
@@ -1094,14 +1101,14 @@ def test_scroll_scene_readiness_deadline_preserves_original_error(tmp_path, monk
         tmp_path,
         {"version": 1, "steps": [{"action": "scroll_to_element", "identifier": "target", "timeout": 0.51}]},
     )
-    protocol_error = _ax_readiness_error(_SCENE_READINESS_MESSAGE, code="unavailable")
+    protocol_error = _ax_readiness_error(message, code="unavailable")
     service = ScriptedTreeService([protocol_error])
 
     with pytest.raises(ScenarioError, match="timed out after 0 down swipes") as error:
         run_scenario(service, path, tmp_path / "scene-not-ready")
 
     report = json.loads(error.value.report_path.read_text())
-    assert report["failure"]["error"].endswith(_SCENE_READINESS_MESSAGE)
+    assert report["failure"]["error"].endswith(message)
     assert error.value.__cause__.__cause__ is protocol_error
     assert service.tree_calls == 3
     assert all(0 < timeout <= 0.51 for timeout in service.tree_timeouts)

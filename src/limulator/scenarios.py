@@ -55,6 +55,14 @@ _AX_READINESS_ERRORS = _PRE_HID_READINESS_ERRORS | frozenset(
             "Active interface geometry is unavailable: "
             "Foreground bundle or its unique scene could not be verified within the display bounds",
         ),
+        (
+            "unavailable",
+            "Active point geometry is unavailable: a unique oriented default-main display is required",
+        ),
+        (
+            "unavailable",
+            "Cannot bind accessibility coordinates to a unique foreground scene and oriented display",
+        ),
     }
 )
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
