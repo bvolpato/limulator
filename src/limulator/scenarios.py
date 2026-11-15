@@ -695,9 +695,9 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
         ):
             raise ScenarioError("Guest capture returned invalid viewport geometry for scrolling")
         x = (frame.width - 1) * 0.5
-        lower, upper = (frame.height - 1) * 0.78, (frame.height - 1) * 0.32
+        lower, upper = (frame.height - 1) * 0.78, (frame.height - 1) * 0.58
         y0, y1 = (lower, upper) if action["direction"] == "down" else (upper, lower)
-        service.swipe(x, y0, x, y1, 350, frame.identity)
+        service.swipe(x, y0, x, y1, 800, frame.identity)
         swipes += 1
         time.sleep(min(0.25, remaining()))
 

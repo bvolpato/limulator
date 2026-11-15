@@ -1200,7 +1200,7 @@ def test_scroll_reveals_offscreen_target_then_keeps_tap_semantic(tmp_path, monke
     )
     report = run_scenario(service, path, tmp_path / "scroll-success")
     assert service.inputs == [
-        ("swipe", (99.5, 233.22, 99.5, 95.68, 350, "200x300:0")),
+        ("swipe", (99.5, 233.22, 99.5, 173.42, 800, "200x300:0")),
         ("tap_element", ("target",)),
     ]
     result = report["steps"][0]["result"]
@@ -1225,7 +1225,7 @@ def test_scroll_uses_guest_point_bounds_instead_of_framebuffer_pixels(tmp_path, 
     )
     report = run_scenario(service, path, tmp_path / "point-bounds")
     assert report["steps"][0]["result"]["swipes"] == 1
-    assert service.inputs == [("swipe", (99.5, 95.68, 99.5, 233.22, 350, "200x300:0"))]
+    assert service.inputs == [("swipe", (99.5, 173.42, 99.5, 233.22, 800, "200x300:0"))]
 
 
 def test_scroll_absence_stops_at_swipe_limit_with_failure_evidence(tmp_path, monkeypatch):
@@ -1273,8 +1273,8 @@ def test_scroll_recaptures_geometry_before_each_swipe(tmp_path, monkeypatch):
     )
     report = run_scenario(service, path, tmp_path / "resized-scroll")
     first, second = [args for name, args in service.inputs if name == "swipe"]
-    assert first[:5] == pytest.approx((99.5, 233.22, 99.5, 95.68, 350))
-    assert second[:5] == pytest.approx((199.5, 139.62, 199.5, 57.28, 350))
+    assert first[:5] == pytest.approx((99.5, 233.22, 99.5, 173.42, 800))
+    assert second[:5] == pytest.approx((199.5, 139.62, 199.5, 103.82, 800))
     assert (first[-1], second[-1]) == ("200x300:0", "400x180:0")
     assert report["steps"][0]["result"]["swipes"] == 2
 
