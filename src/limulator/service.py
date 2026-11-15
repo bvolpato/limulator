@@ -25,6 +25,27 @@ class DeviceError(RuntimeError):
     pass
 
 
+KEY_NAMES = frozenset(
+    {
+        "return",
+        "enter",
+        "delete",
+        "backspace",
+        "tab",
+        "escape",
+        "space",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+    }
+)
+
+
 _MAX_CAPTURE_PIXELS = 40_000_000
 
 
@@ -293,6 +314,12 @@ class DeviceService:
             raise DeviceError("Unknown device button")
         with self._interaction():
             return self.runtime.guest().rpc("input.button", {"name": "power" if name == "lock" else name})
+
+    def key(self, name: str) -> dict:
+        if not isinstance(name, str) or name not in KEY_NAMES:
+            raise DeviceError("Unknown keyboard key")
+        with self._interaction():
+            return self.runtime.guest().rpc("input.key", {"name": name})
 
     def fold(self, position: str) -> dict:
         if not self.supports_fold:

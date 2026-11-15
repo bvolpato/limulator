@@ -21,6 +21,32 @@ def test_module_entrypoint_propagates_an_unknown_device_failure(tmp_path):
     assert "unknown device" in result.stderr
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_key_command_forwards_and_reports_input_failure(monkeypatch, tmp_path, capsys, fails):
+    service = Mock()
+    service.key.return_value = {"key": "return", "dispatched": True}
+    if fails:
+        service.key.side_effect = cli.DeviceError("HID key release failed")
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: object())
+    monkeypatch.setattr(cli, "DeviceService", lambda runtime: service)
+
+    assert cli.main(["--data", str(tmp_path), "key", "return"]) == int(fails)
+    service.key.assert_called_once_with("return")
+    output = capsys.readouterr()
+    if fails:
+        assert "HID key release failed" in output.err
+    else:
+        assert json.loads(output.out) == service.key.return_value
+
+
+@pytest.mark.parametrize("name", ["", "unknown"])
+def test_key_command_rejects_invalid_names(name):
+    with pytest.raises(SystemExit) as error:
+        cli.parser().parse_args(["key", name])
+    assert error.value.code == 2
+
+
 def test_create_profile_resolves_model_os_and_scale(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr("limulator.creator.create_device", lambda *args, **kwargs: calls.append(args) or {})

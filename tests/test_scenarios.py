@@ -97,6 +97,9 @@ class FakeService:
     def text(self, *args: Any) -> dict[str, Any]:
         return self._input("text", *args)
 
+    def key(self, *args: Any) -> dict[str, Any]:
+        return self._input("key", *args)
+
     def button(self, *args: Any) -> dict[str, Any]:
         return self._input("button", *args)
 
@@ -580,6 +583,7 @@ def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(
             },
             {"action": "assert_text", "text": "1", "identifier": "counterlab.counter.value", "exact": True},
             {"action": "wait", "seconds": 0},
+            {"action": "key", "name": "return"},
         ],
     }
     path = _write_scenario(tmp_path, document)
@@ -616,6 +620,7 @@ def test_run_scenario_reports_each_action_and_hashed_guest_screenshots(
         ("button", ("home",)),
         ("fold", ("open",)),
         ("terminate", ("com.example.Counter",)),
+        ("key", ("return",)),
     ]
     assert service.tree_calls == 3
     assert len(service.tree_timeouts) == 3
@@ -679,6 +684,14 @@ def test_report_keeps_recorded_graphics_policy_on_action_failure(
             "step 1 identifier",
         ),
         (
+            '{"version":1,"steps":[{"action":"key","name":""}]}',
+            "step 1 key name",
+        ),
+        (
+            '{"version":1,"steps":[{"action":"key","name":"unknown"}]}',
+            "unknown keyboard key",
+        ),
+        (
             '{"version":1,"steps":[{"action":"tap_element","identifier":"target","timeout":0}]}',
             "tap timeout must be greater than 0 and at most 120",
         ),
@@ -720,13 +733,16 @@ def test_all_steps_validate_before_first_input_and_write_failure_evidence(
     assert (output / "screenshots" / "failure.png").read_bytes() == FakeFrame.png
 
 
-def test_action_failure_writes_failed_step_and_actual_failure_capture(tmp_path: Path) -> None:
-    path = _write_scenario(tmp_path, {"version": 1, "steps": [{"action": "tap", "x": 1, "y": 2}]})
-    service = FakeService(fail_action="tap")
+@pytest.mark.parametrize("action", [{"action": "tap", "x": 1, "y": 2}, {"action": "key", "name": "return"}])
+def test_action_failure_writes_failed_step_and_actual_failure_capture(tmp_path: Path, action: dict) -> None:
+    path = _write_scenario(tmp_path, {"version": 1, "steps": [action]})
+    service = FakeService(fail_action=action["action"])
     output = tmp_path / "failed-run"
 
-    with pytest.raises(ScenarioError, match="tap failed in fake service") as error:
+    with pytest.raises(ScenarioError, match=f"{action['action']} failed in fake service") as error:
         run_scenario(service, path, output)
+
+    assert len(service.inputs) == 1
 
     report = json.loads(error.value.report_path.read_text())
     assert report["status"] == "failed"

@@ -159,6 +159,7 @@ uv run limulator screenshot artifacts/example.png
 uv run limulator tap 300 500
 uv run limulator tap-element counterlab.increment
 uv run limulator text 'Hello from Linux'
+uv run limulator key return
 uv run limulator fold open
 uv run limulator tree
 ```
@@ -177,6 +178,8 @@ uv run limulator test examples/CounterLab/scenarios/duo.json --output artifacts/
 ```
 
 Each run requires a new output directory. It writes `report.json` and genuine guest PNGs with hashes. A failed assertion produces a failing command and attempts a failure capture. If capture itself fails, the report records the error without inventing an image.
+
+Use `{"action":"key","name":"return"}` after entering a search query to press the focused field's Return or Search key. The CLI and scenario action also accept `enter`, `tab`, `escape`, `space`, `delete`, `backspace`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, and `pagedown`. They send one native `input.key` request. Unknown names fail before input, and guest errors stop the action without retrying a key that may already have been delivered.
 
 The scenario `tap_element` action accepts an optional `timeout` in seconds, defaulting to 60 and capped at 120. It retries only the pinned guest's exact accessibility-readiness errors that occur before HID dispatch. All attempts share that deadline. A successful tap is sent once; transport timeouts, HID failures, and unknown errors stop the action because input may already have been delivered.
 

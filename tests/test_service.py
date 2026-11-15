@@ -116,6 +116,36 @@ def test_button_maps_lock_to_the_guest_power_action(button, guest_button):
     assert runtime.client.calls == [("input.button", {"name": guest_button})]
 
 
+@pytest.mark.parametrize("name", ["return", "tab", "escape"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_key_forwards_once_and_propagates_guest_failure(name, fails):
+    runtime = Runtime()
+    result = {"key": name, "dispatched": True}
+
+    def rpc(method, params):
+        runtime.client.calls.append((method, params))
+        if fails:
+            raise ProtocolError("HID key release failed")
+        return result
+
+    runtime.client.rpc = rpc
+    service = DeviceService(runtime)
+    if fails:
+        with pytest.raises(ProtocolError, match="HID key release failed"):
+            service.key(name)
+    else:
+        assert service.key(name) == result
+    assert runtime.client.calls == [("input.key", {"name": name})]
+
+
+@pytest.mark.parametrize("name", ["", "unknown", "return\0", None, []])
+def test_key_rejects_invalid_names_before_guest_input(name):
+    runtime = Runtime()
+    with pytest.raises(DeviceError, match="Unknown keyboard key"):
+        DeviceService(runtime).key(name)
+    assert runtime.client.calls == []
+
+
 def test_folded_frame_rotation_and_tap_use_the_same_physical_geometry():
     runtime = Runtime()
     runtime.client.angle = 180

@@ -17,7 +17,7 @@ from .applications import AppError, build_app, inspect_app
 from .graphics import GRAPHICS_MODES
 from .lifecycle import Device, Paths, Registry, Runtime, _validate_name
 from .profiles import get_profile, list_profiles, public_metadata
-from .service import DeviceError, DeviceService, device_metadata
+from .service import KEY_NAMES, DeviceError, DeviceService, device_metadata
 
 
 def _print(value) -> None:
@@ -250,6 +250,8 @@ def parser() -> argparse.ArgumentParser:
     swipe.add_argument("--duration", type=float, default=350, help="duration in milliseconds")
     text = commands.add_parser("text", help="type into the focused native text field")
     text.add_argument("text")
+    key = commands.add_parser("key", help="press a named keyboard key in the focused app")
+    key.add_argument("name", choices=sorted(KEY_NAMES))
     button = commands.add_parser("button", help="press a hardware button")
     button.add_argument("name", choices=("home", "lock", "volume-up", "volume-down"))
     fold = commands.add_parser("fold", help="change a Duo guest's posture")
@@ -395,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
             result = service.swipe(args.x0, args.y0, args.x1, args.y1, args.duration)
         elif args.command == "text":
             result = service.text(args.text)
+        elif args.command == "key":
+            result = service.key(args.name)
         elif args.command == "button":
             result = service.button(args.name)
         elif args.command == "fold":

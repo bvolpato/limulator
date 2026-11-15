@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .protocols import ProtocolError
+from .service import KEY_NAMES
 
 if TYPE_CHECKING:
     from .service import DeviceService, Frame
@@ -237,6 +238,12 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
         elif action == "text":
             required, optional = {"text"}, set()
             call = {"text": _string(step.get("text"), f"step {index} text")}
+        elif action == "key":
+            required, optional = {"name"}, set()
+            name = _string(step.get("name"), f"step {index} key name", maximum=64)
+            if name not in KEY_NAMES:
+                raise ValueError(f"step {index} unknown keyboard key: {name}")
+            call = {"name": name}
         elif action == "button":
             required, optional = {"name"}, set()
             name = _string(step.get("name"), f"step {index} button name", maximum=64)
@@ -950,6 +957,8 @@ def _execute_action(
         )
     if kind == "text":
         return service.text(action["text"]), None
+    if kind == "key":
+        return service.key(action["name"]), None
     if kind == "button":
         return service.button(action["name"]), None
     if kind == "capture_hinge_baseline":
