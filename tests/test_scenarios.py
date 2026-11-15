@@ -859,6 +859,10 @@ _SCENE_READINESS_MESSAGES = (
     _SCENE_READINESS_MESSAGE,
     "Active point geometry is unavailable: a unique oriented default-main display is required",
     "Cannot bind accessibility coordinates to a unique foreground scene and oriented display",
+    "Cannot verify the foreground application for accessibility input",
+    "Cannot verify a unique foreground process for accessibility input",
+    "Accessibility query did not belong to the verified foreground process",
+    "Foreground process, scene or display changed during the accessibility query",
 )
 _FRONTMOST_READINESS_MESSAGE = "frontmost application could not be verified"
 

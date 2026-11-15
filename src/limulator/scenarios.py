@@ -63,6 +63,10 @@ _AX_READINESS_ERRORS = _PRE_HID_READINESS_ERRORS | frozenset(
             "unavailable",
             "Cannot bind accessibility coordinates to a unique foreground scene and oriented display",
         ),
+        ("unavailable", "Cannot verify the foreground application for accessibility input"),
+        ("unavailable", "Cannot verify a unique foreground process for accessibility input"),
+        ("unavailable", "Accessibility query did not belong to the verified foreground process"),
+        ("unavailable", "Foreground process, scene or display changed during the accessibility query"),
     }
 )
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
