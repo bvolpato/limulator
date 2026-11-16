@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .protocols import ProtocolError
+from .service import KEY_NAMES
 
 if TYPE_CHECKING:
     from .service import DeviceService, Frame
@@ -39,16 +40,34 @@ _MAX_REPORT_RESULT_BYTES = 64 << 10
 _MAX_TREE_NODES = 100_000
 _WAIT_TEXT_POLL_SECONDS = 0.25
 _WAIT_HINGE_POLL_SECONDS = 0.25
+_TAP_ELEMENT_POLL_SECONDS = 0.25
 _MAX_AX_ERROR_BODY_BYTES = 4096
-_AX_READINESS_ERRORS = frozenset(
+_PRE_HID_READINESS_ERRORS = frozenset(
     {
         ("failed", "AX element query failed (-25215)"),
         ("failed", "AX element query failed (-25216)"),
+        ("failed", "frontmost application could not be verified"),
+    }
+)
+_AX_READINESS_ERRORS = _PRE_HID_READINESS_ERRORS | frozenset(
+    {
         (
             "unavailable",
             "Active interface geometry is unavailable: "
             "Foreground bundle or its unique scene could not be verified within the display bounds",
         ),
+        (
+            "unavailable",
+            "Active point geometry is unavailable: a unique oriented default-main display is required",
+        ),
+        (
+            "unavailable",
+            "Cannot bind accessibility coordinates to a unique foreground scene and oriented display",
+        ),
+        ("unavailable", "Cannot verify the foreground application for accessibility input"),
+        ("unavailable", "Cannot verify a unique foreground process for accessibility input"),
+        ("unavailable", "Accessibility query did not belong to the verified foreground process"),
+        ("unavailable", "Foreground process, scene or display changed during the accessibility query"),
     }
 )
 _TEXT_FIELDS = {"label", "value", "title", "text", "accessibilitylabel", "name"}
@@ -179,8 +198,14 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
                         f"step {index} non-empty launch args are unsupported by the selected backend"
                     )
         elif action == "tap_element":
-            required, optional = {"identifier"}, set()
-            call = {"identifier": _string(step.get("identifier"), f"step {index} identifier", maximum=1024)}
+            required, optional = {"identifier"}, {"timeout"}
+            timeout = _number(step.get("timeout", 60), f"step {index} timeout")
+            if not 0 < timeout <= 120:
+                raise ValueError(f"step {index} tap timeout must be greater than 0 and at most 120 seconds")
+            call = {
+                "identifier": _string(step.get("identifier"), f"step {index} identifier", maximum=1024),
+                "timeout": timeout,
+            }
         elif action == "scroll_to_element":
             required, optional = {"identifier"}, {"direction", "max_swipes", "timeout"}
             direction = step.get("direction", "down")
@@ -213,6 +238,12 @@ def _validate_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
         elif action == "text":
             required, optional = {"text"}, set()
             call = {"text": _string(step.get("text"), f"step {index} text")}
+        elif action == "key":
+            required, optional = {"name"}, set()
+            name = _string(step.get("name"), f"step {index} key name", maximum=64)
+            if name not in KEY_NAMES:
+                raise ValueError(f"step {index} unknown keyboard key: {name}")
+            call = {"name": name}
         elif action == "button":
             required, optional = {"name"}, set()
             name = _string(step.get("name"), f"step {index} button name", maximum=64)
@@ -400,7 +431,9 @@ def _visible_matches(
     return matches
 
 
-def _ax_readiness_error(error: ProtocolError) -> str | None:
+def _ax_readiness_error(
+    error: ProtocolError, *, allowed_errors: frozenset[tuple[str, str]] = _AX_READINESS_ERRORS
+) -> str | None:
     if error.status_code != 400 or not isinstance(error.details, bytes):
         return None
     if len(error.details) > _MAX_AX_ERROR_BODY_BYTES:
@@ -420,7 +453,7 @@ def _ax_readiness_error(error: ProtocolError) -> str | None:
     message = detail.get("message")
     return (
         message
-        if isinstance(code, str) and isinstance(message, str) and (code, message) in _AX_READINESS_ERRORS
+        if isinstance(code, str) and isinstance(message, str) and (code, message) in allowed_errors
         else None
     )
 
@@ -662,9 +695,9 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
         ):
             raise ScenarioError("Guest capture returned invalid viewport geometry for scrolling")
         x = (frame.width - 1) * 0.5
-        lower, upper = (frame.height - 1) * 0.78, (frame.height - 1) * 0.32
+        lower, upper = (frame.height - 1) * 0.78, (frame.height - 1) * 0.58
         y0, y1 = (lower, upper) if action["direction"] == "down" else (upper, lower)
-        service.swipe(x, y0, x, y1, 350, frame.identity)
+        service.swipe(x, y0, x, y1, 800, frame.identity)
         swipes += 1
         time.sleep(min(0.25, remaining()))
 
@@ -872,6 +905,29 @@ def _wait_hinge(
         time.sleep(min(_WAIT_HINGE_POLL_SECONDS, deadline - now))
 
 
+def _tap_element(service: DeviceService, action: dict[str, Any]) -> Any:
+    deadline = time.monotonic() + action["timeout"]
+    last_ax_error: str | None = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            message = f"timed out waiting to tap AX element {action['identifier']!r}"
+            if last_ax_error is not None:
+                message += f"; last AX readiness error: {last_ax_error}"
+            raise ScenarioError(message)
+        try:
+            return service.tap_element(action["identifier"], timeout=remaining)
+        except ProtocolError as exc:
+            # In pinned IcliKit these exact errors precede HID dispatch.
+            # Transport failures and HID errors may occur after input is sent.
+            last_ax_error = _ax_readiness_error(exc, allowed_errors=_PRE_HID_READINESS_ERRORS)
+            if last_ax_error is None:
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(_TAP_ELEMENT_POLL_SECONDS, remaining))
+
+
 def _execute_action(
     service: DeviceService,
     action: dict[str, Any],
@@ -883,7 +939,7 @@ def _execute_action(
     if kind == "launch":
         return service.launch(action["bundle_id"], action["args"]), None
     if kind == "tap_element":
-        return service.tap_element(action["identifier"]), None
+        return _tap_element(service, action), None
     if kind == "scroll_to_element":
         return _scroll_to_element(service, action), None
     if kind == "tap":
@@ -901,6 +957,8 @@ def _execute_action(
         )
     if kind == "text":
         return service.text(action["text"]), None
+    if kind == "key":
+        return service.key(action["name"]), None
     if kind == "button":
         return service.button(action["name"]), None
     if kind == "capture_hinge_baseline":

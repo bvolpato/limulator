@@ -114,6 +114,8 @@ uv run limulator --device duo start --wait 600
 uv run limulator --device duo stop
 ```
 
+`start --wait` returns a nonzero exit status if startup fails or the guest is still booting when the wait expires. It retains the structured status output for diagnosis. Without a positive wait, a successfully launched guest may still be booting and returns success.
+
 `start --window` opens the native emulator window with Home, Lock, volume, and Screenshot controls to the right of the device. Home wakes and swipes a locked phone; on an unlocked phone it sends Home. Power wakes a sleeping display or sends the virtual side-button action. Passcodes require your input. Screenshots save only when you press Screenshot. The toolbar uses the private control socket of that run and ends with its emulator. The browser console works with a headless guest. The `running` state confirms guest daemon health. It does not establish that the screen is awake or unlocked.
 
 In the console, the destination picker lists registered devices and profiles that can be created. Selecting a registered device shows its OS, geometry, support status, and named Start and Stop controls. Stop waits for the owned guest to shut down and rejects duplicate requests while it is in progress. Duo alone exposes fold controls. Selecting a profile without a registered device shows a copyable creation command; creation and firmware downloads run through the terminal. Refresh the picker after registering or creating a device.
@@ -157,6 +159,7 @@ uv run limulator screenshot artifacts/example.png
 uv run limulator tap 300 500
 uv run limulator tap-element counterlab.increment
 uv run limulator text 'Hello from Linux'
+uv run limulator key return
 uv run limulator fold open
 uv run limulator tree
 ```
@@ -176,6 +179,10 @@ uv run limulator test examples/CounterLab/scenarios/duo.json --output artifacts/
 
 Each run requires a new output directory. It writes `report.json` and genuine guest PNGs with hashes. A failed assertion produces a failing command and attempts a failure capture. If capture itself fails, the report records the error without inventing an image.
 
+Use `{"action":"key","name":"return"}` after entering a search query to press the focused field's Return or Search key. The CLI and scenario action also accept `enter`, `tab`, `escape`, `space`, `delete`, `backspace`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, and `pagedown`. They send one native `input.key` request. Unknown names fail before input, and guest errors stop the action without retrying a key that may already have been delivered.
+
+The scenario `tap_element` action accepts an optional `timeout` in seconds, defaulting to 60 and capped at 120. It retries only the pinned guest's exact accessibility-readiness errors that occur before HID dispatch. All attempts share that deadline. A successful tap is sent once; transport timeouts, HID failures, and unknown errors stop the action because input may already have been delivered.
+
 The report records the runtime's `graphics_policy`, including its mode and inherited `REIMS_VGPU_EXACT` setting when known. It does not infer historical settings from the current shell. A passing scenario establishes its tested UI behavior, not full Metal equivalence; retain the backend stderr warnings with acceptance evidence.
 
 Semantic taps only select visible accessibility elements. To reach a control below the viewport, add an explicit scroll action before its tap:
@@ -184,7 +191,7 @@ Semantic taps only select visible accessibility elements. To reach a control bel
 {"action": "scroll_to_element", "identifier": "counterlab.details.link", "direction": "down", "max_swipes": 6, "timeout": 30}
 ```
 
-`direction` is `down` toward later content or `up` toward earlier content. It defaults to `down`; `max_swipes` defaults to 6 and accepts integers from 0 through 12; `timeout` defaults to 30 seconds and must be positive and at most 120 seconds. The action queries the guest's flat AX snapshot and `device.screen` point bounds. It accepts the exact identifier only when visible with an activation point inside those bounds. It captures a fresh framebuffer before each proportional swipe. It does not tap the target, retry transport failures, or infer UIKit point bounds from profile pixels. Reports include the swipe count, activation point, and daemon-reported point bounds.
+`direction` is `down` toward later content or `up` toward earlier content. It defaults to `down`; `max_swipes` defaults to 6 and accepts integers from 0 through 12; `timeout` defaults to 30 seconds and must be positive and at most 120 seconds. The action queries the guest's flat AX snapshot and `device.screen` point bounds. It accepts the exact identifier only when visible with an activation point inside those bounds. It captures a fresh framebuffer before each proportional swipe, then uses an 800 ms drag spanning 20% of the viewport height to limit overshoot. It does not tap the target, retry transport failures, or infer UIKit point bounds from profile pixels. Reports include the swipe count, activation point, and daemon-reported point bounds.
 
 `device.screen` uses the same IcliKit interface metrics as accessibility visibility and semantic tap validation. These metrics come from the UIKit screen capture and SpringBoard orientation, with a fallback to the main panel. They do not establish an experimental Duo inner window's UIKit geometry; that mapping still needs native verification.
 

@@ -25,6 +25,27 @@ class DeviceError(RuntimeError):
     pass
 
 
+KEY_NAMES = frozenset(
+    {
+        "return",
+        "enter",
+        "delete",
+        "backspace",
+        "tab",
+        "escape",
+        "space",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+    }
+)
+
+
 _MAX_CAPTURE_PIXELS = 40_000_000
 
 
@@ -256,11 +277,13 @@ class DeviceService:
                 qmp.tap(raw_x, raw_y, frame.raw_width, frame.raw_height)
             return {"sent": True}
 
-    def tap_element(self, identifier: str) -> dict:
+    def tap_element(self, identifier: str, *, timeout: float = 60) -> dict:
         if not isinstance(identifier, str) or not 1 <= len(identifier) <= 1024 or "\0" in identifier:
             raise DeviceError("An accessibility identifier of 1 to 1024 characters is required")
         with self._interaction():
-            return self.runtime.guest().rpc("ui.tap_element", {"identifier": identifier, "match": "exact"})
+            return self.runtime.guest(timeout=timeout).rpc(
+                "ui.tap_element", {"identifier": identifier, "match": "exact"}
+            )
 
     def swipe(
         self,
@@ -291,6 +314,12 @@ class DeviceService:
             raise DeviceError("Unknown device button")
         with self._interaction():
             return self.runtime.guest().rpc("input.button", {"name": "power" if name == "lock" else name})
+
+    def key(self, name: str) -> dict:
+        if not isinstance(name, str) or name not in KEY_NAMES:
+            raise DeviceError("Unknown keyboard key")
+        with self._interaction():
+            return self.runtime.guest().rpc("input.key", {"name": name})
 
     def fold(self, position: str) -> dict:
         if not self.supports_fold:

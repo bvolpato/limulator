@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -18,6 +19,32 @@ def test_module_entrypoint_propagates_an_unknown_device_failure(tmp_path):
     )
     assert result.returncode == 1
     assert "unknown device" in result.stderr
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_key_command_forwards_and_reports_input_failure(monkeypatch, tmp_path, capsys, fails):
+    service = Mock()
+    service.key.return_value = {"key": "return", "dispatched": True}
+    if fails:
+        service.key.side_effect = cli.DeviceError("HID key release failed")
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: object())
+    monkeypatch.setattr(cli, "DeviceService", lambda runtime: service)
+
+    assert cli.main(["--data", str(tmp_path), "key", "return"]) == int(fails)
+    service.key.assert_called_once_with("return")
+    output = capsys.readouterr()
+    if fails:
+        assert "HID key release failed" in output.err
+    else:
+        assert json.loads(output.out) == service.key.return_value
+
+
+@pytest.mark.parametrize("name", ["", "unknown"])
+def test_key_command_rejects_invalid_names(name):
+    with pytest.raises(SystemExit) as error:
+        cli.parser().parse_args(["key", name])
+    assert error.value.code == 2
 
 
 def test_create_profile_resolves_model_os_and_scale(monkeypatch, tmp_path):
@@ -55,13 +82,45 @@ def test_create_accepts_explicit_graphics_mode(monkeypatch, tmp_path, mode):
 
 def test_start_passes_explicit_graphics_mode(monkeypatch, tmp_path):
     runtime = Mock()
-    runtime.start.return_value = {"state": "booting"}
+    runtime.start.return_value = {"state": "running"}
     monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
     monkeypatch.setattr(cli, "Runtime", lambda paths, device: runtime)
     monkeypatch.setattr(cli, "DeviceService", lambda selected_runtime: object())
 
     assert cli.main(["--data", str(tmp_path), "start", "--graphics-mode", "diagnostic"]) == 0
     runtime.start.assert_called_once_with(window=False, wait_timeout=300, graphics_mode="diagnostic")
+
+
+@pytest.mark.parametrize(
+    "wait,state,expected",
+    [
+        (300, "error", 1),
+        (0, "error", 1),
+        (300, "stopped", 1),
+        (0, "stopped", 1),
+        (0.25, "booting", 1),
+        (300, "running", 0),
+        (0, "running", 0),
+        (0, "booting", 0),
+    ],
+)
+def test_start_exit_status_preserves_structured_result(monkeypatch, tmp_path, capsys, wait, state, expected):
+    result = {"state": state}
+    if state == "error":
+        result["error"] = "QEMU launcher exited with status 1"
+    runtime = Mock()
+    runtime.start.return_value = result
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: runtime)
+    monkeypatch.setattr(cli, "DeviceService", lambda selected_runtime: object())
+
+    assert cli.main(["--data", str(tmp_path), "start", "--wait", str(wait)]) == expected
+
+    runtime.start.assert_called_once_with(window=False, wait_timeout=wait)
+    runtime.stop.assert_not_called()
+    output = capsys.readouterr()
+    assert json.loads(output.out) == result
+    assert output.err == ""
 
 
 @pytest.mark.parametrize("override", [["--model", "iPhone19,4"], ["--ios", "27.1"], ["--scale", "3"]])

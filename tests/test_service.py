@@ -116,6 +116,36 @@ def test_button_maps_lock_to_the_guest_power_action(button, guest_button):
     assert runtime.client.calls == [("input.button", {"name": guest_button})]
 
 
+@pytest.mark.parametrize("name", ["return", "tab", "escape"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_key_forwards_once_and_propagates_guest_failure(name, fails):
+    runtime = Runtime()
+    result = {"key": name, "dispatched": True}
+
+    def rpc(method, params):
+        runtime.client.calls.append((method, params))
+        if fails:
+            raise ProtocolError("HID key release failed")
+        return result
+
+    runtime.client.rpc = rpc
+    service = DeviceService(runtime)
+    if fails:
+        with pytest.raises(ProtocolError, match="HID key release failed"):
+            service.key(name)
+    else:
+        assert service.key(name) == result
+    assert runtime.client.calls == [("input.key", {"name": name})]
+
+
+@pytest.mark.parametrize("name", ["", "unknown", "return\0", None, []])
+def test_key_rejects_invalid_names_before_guest_input(name):
+    runtime = Runtime()
+    with pytest.raises(DeviceError, match="Unknown keyboard key"):
+        DeviceService(runtime).key(name)
+    assert runtime.client.calls == []
+
+
 def test_folded_frame_rotation_and_tap_use_the_same_physical_geometry():
     runtime = Runtime()
     runtime.client.angle = 180
@@ -332,6 +362,21 @@ def test_screen_queries_native_point_bounds_with_the_requested_timeout():
     DeviceService(runtime).screen(timeout=0.75)
     assert timeouts == [0.75]
     assert runtime.client.calls == [("device.screen", None)]
+
+
+def test_tap_element_passes_remaining_deadline_to_guest():
+    runtime = Runtime()
+    timeouts = []
+
+    def guest(timeout=60):
+        timeouts.append(timeout)
+        return runtime.client
+
+    runtime.guest = guest
+    DeviceService(runtime).tap_element("target", timeout=0.75)
+    assert timeouts == [0.75]
+    assert runtime.client.calls == [("ui.tap_element", {"identifier": "target", "match": "exact"})]
+    assert runtime.peer.calls == []
 
 
 def test_hinge_status_reads_the_duo_provider_value_with_the_requested_timeout():
