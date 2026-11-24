@@ -522,6 +522,7 @@ class QMPClient:
         self._next_id = 0
         self.events: list[dict[str, Any]] = []
         self._closed = False
+        self._broken = False
         deadline = time.monotonic() + self.timeout
         try:
             _set_socket_deadline(self._socket, deadline, f"connecting to QMP socket {self.path}")
@@ -540,6 +541,14 @@ class QMPClient:
         except BaseException:
             self.close()
             raise
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def broken(self) -> bool:
+        return self._broken
 
     def __enter__(self) -> QMPClient:
         return self
@@ -574,7 +583,7 @@ class QMPClient:
         _sendall(self._socket, encoded, deadline, f"writing {what}")
 
     def command(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        if self._closed:
+        if self._closed or self._broken:
             raise ProtocolError("QMP client is closed")
         if not isinstance(name, str) or not name:
             raise ValueError("QMP command name must be a non-empty string")
@@ -586,38 +595,54 @@ class QMPClient:
             cause = TimeoutError("deadline expired while waiting for QMP command lock")
             raise ProtocolError("timed out waiting for QMP command lock") from cause
         try:
+            if self._closed or self._broken:
+                raise ProtocolError("QMP client is closed")
             _remaining(deadline, "issuing QMP command")
             self._next_id += 1
             request_id = self._next_id
             payload: dict[str, Any] = {"execute": name, "id": request_id}
             if arguments is not None:
                 payload["arguments"] = arguments
-            self._send_json(payload, deadline, what=f"QMP command {name}")
-            for _ in range(_MAX_QMP_MESSAGES_PER_COMMAND):
-                reply = self._receive_json(deadline)
-                if not isinstance(reply, dict):
-                    raise ProtocolError("QMP response must be a JSON object", details=reply)
-                if "event" in reply:
-                    self.events.append(reply)
-                    if len(self.events) > _MAX_QMP_EVENTS:
-                        del self.events[: len(self.events) - _MAX_QMP_EVENTS]
-                    continue
-                if "id" not in reply:
-                    raise ProtocolError("QMP command response is missing its id", details=reply)
-                if reply["id"] != request_id:
-                    # A delayed duplicate reply is not the answer to the command in flight.
-                    continue
-                if "error" in reply:
-                    raise ProtocolError(
-                        f"QMP command {name} failed: {self._qmp_error_message(reply['error'])}",
-                        details=reply["error"],
-                    )
-                if "return" not in reply:
-                    raise ProtocolError("QMP response has neither return nor error", details=reply)
-                return reply["return"]
-            raise ProtocolError("too many stale QMP messages while waiting for a response")
+            try:
+                self._send_json(payload, deadline, what=f"QMP command {name}")
+                for _ in range(_MAX_QMP_MESSAGES_PER_COMMAND):
+                    reply = self._receive_json(deadline)
+                    if not isinstance(reply, dict):
+                        raise ProtocolError("QMP response must be a JSON object", details=reply)
+                    if "event" in reply:
+                        self.events.append(reply)
+                        if len(self.events) > _MAX_QMP_EVENTS:
+                            del self.events[: len(self.events) - _MAX_QMP_EVENTS]
+                        continue
+                    if "id" not in reply:
+                        raise ProtocolError("QMP command response is missing its id", details=reply)
+                    if reply["id"] != request_id:
+                        # A delayed duplicate reply is not the answer to the command in flight.
+                        continue
+                    if "error" in reply:
+                        # QMP stays synchronized after a command-level error response.
+                        return self._raise_remote_error(name, reply["error"])
+                    if "return" not in reply:
+                        raise ProtocolError("QMP response has neither return nor error", details=reply)
+                    return reply["return"]
+                raise ProtocolError("too many stale QMP messages while waiting for a response")
+            except _QMPRemoteError as exc:
+                raise exc.protocol_error from None
+            except BaseException:
+                self._broken = True
+                self.close()
+                raise
         finally:
             self._command_lock.release()
+
+    @classmethod
+    def _raise_remote_error(cls, name: str, error: Any) -> Any:
+        raise _QMPRemoteError(
+            ProtocolError(
+                f"QMP command {name} failed: {cls._qmp_error_message(error)}",
+                details=error,
+            )
+        )
 
     @staticmethod
     def _qmp_error_message(error: Any) -> str:
@@ -678,10 +703,15 @@ class QMPClient:
     def _button_event(button: str, down: bool) -> dict[str, Any]:
         return {"type": "btn", "data": {"down": down, "button": button}}
 
-    def _press_and_release(self, button: str, action: Callable[[], None]) -> None:
+    def _press_at_and_release(
+        self,
+        events: list[dict[str, Any]],
+        button: str,
+        action: Callable[[], None],
+    ) -> None:
         try:
             # Release even if the down command times out after QEMU received it.
-            self._send_events([self._button_event(button, True)])
+            self._send_events([*events, self._button_event(button, True)])
             action()
         except BaseException:
             try:
@@ -692,11 +722,12 @@ class QMPClient:
         else:
             self._send_events([self._button_event(button, False)])
 
+    def _press_and_release(self, button: str, action: Callable[[], None]) -> None:
+        self._press_at_and_release([], button, action)
+
     def tap(self, x: float, y: float, width: float, height: float) -> None:
         position = self._absolute_events(x, y, width, height)
-        self._send_events(position)
-        time.sleep(0.05)
-        self._press_and_release("left", lambda: time.sleep(0.12))
+        self._press_at_and_release(position, "left", lambda: time.sleep(0.04))
 
     def swipe(
         self,
@@ -705,7 +736,7 @@ class QMPClient:
         width: float,
         height: float,
         duration: float = 0.3,
-        steps: int = 20,
+        steps: int | None = None,
     ) -> None:
         if len(start) != 2 or len(end) != 2:
             raise ValueError("swipe start and end must each contain x and y")
@@ -716,22 +747,51 @@ class QMPClient:
         duration_f = float(duration)
         if not math.isfinite(duration_f) or duration_f < 0:
             raise ValueError("duration must be a finite non-negative number")
-        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
-            raise ValueError("steps must be a positive integer")
-
-        self._send_events(start_events)
-        time.sleep(0.05)
+        if steps is None:
+            step_count = max(1, min(60, round(duration_f * 60))) if duration_f > 0 else 1
+        else:
+            if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+                raise ValueError("steps must be a positive integer")
+            step_count = steps
 
         def drag() -> None:
-            for step in range(1, steps + 1):
-                ratio = step / steps
+            interval = duration_f / step_count if duration_f else 0.0
+            for step in range(1, step_count + 1):
+                if interval:
+                    time.sleep(interval)
+                ratio = step / step_count
                 x = start[0] + (end[0] - start[0]) * ratio
                 y = start[1] + (end[1] - start[1]) * ratio
                 self._send_events(self._absolute_events(x, y, width, height))
-                if duration_f:
-                    time.sleep(duration_f / steps)
 
-        self._press_and_release("left", drag)
+        self._press_at_and_release(start_events, "left", drag)
+
+    def pointer_down(self, x: float, y: float, width: float, height: float) -> None:
+        events = [*self._absolute_events(x, y, width, height), self._button_event("left", True)]
+        self._send_events(events)
+
+    def pointer_move(self, x: float, y: float, width: float, height: float) -> None:
+        self._send_events(self._absolute_events(x, y, width, height))
+
+    def pointer_up(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> None:
+        events: list[dict[str, Any]] = []
+        if x is not None or y is not None:
+            if x is None or y is None or width is None or height is None:
+                raise ValueError("pointer_up coordinates require x, y, width, and height")
+            events.extend(self._absolute_events(x, y, width, height))
+        events.append(self._button_event("left", False))
+        self._send_events(events)
 
     def home(self) -> None:
         self._press_and_release("middle", lambda: time.sleep(0.1))
+
+
+class _QMPRemoteError(Exception):
+    def __init__(self, protocol_error: ProtocolError) -> None:
+        self.protocol_error = protocol_error

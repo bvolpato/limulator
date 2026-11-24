@@ -142,8 +142,10 @@ function setup(stalledPaths = []) {
   const timers = new Map();
   const calls = [], notices = [], screens = [], reads = [], commands = [];
   let nextTimer = 0;
+  let nowMs = 100;
   const context = {
     AbortController, FormData, Blob, URL, Uint8Array, console,
+    performance: { now: () => nowMs },
     window: {
       location: { origin: 'http://console.test' },
       setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
@@ -200,7 +202,7 @@ function setup(stalledPaths = []) {
     };
     catalog.devices = ['duo', 'phone'].map((name) => ({ name }));
   `), Object.assign(context, { notices }));
-  return { api: context.api, calls, screens, reads, commands, notices, timers, element };
+    return { api: context.api, calls, screens, reads, commands, notices, timers, element, advanceTime(ms) { nowMs += ms; } };
 }
 const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
 (async () => {
@@ -238,14 +240,12 @@ const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
     }
     const command = api.mutate('/api/launch');
     await flush();
-    assert.equal(commands.length, 0, `launch must drain ${path} as well as screen capture`);
+    assert.equal(commands.length, 1, `mutations must not block behind ${path} (which does not hold DeviceService.lock)`);
+    commands[0].body.resolve('{}');
+    assert.equal(await command, true);
     reads[0].body.resolve(JSON.stringify(path === '/api/status'
       ? { state: 'connected', device: {} } : { apps: [] }));
     await read;
-    await flush();
-    assert.equal(commands.length, 1);
-    commands[0].body.resolve('{}');
-    assert.equal(await command, true);
   }
   {
     const { api, reads, element } = setup(['/api/apps']);
@@ -354,6 +354,35 @@ const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])]);
     api.disconnect();
     assert.equal(unlock.disabled, true);
     assert.equal(commands.length, 2, 'unlock must not retry or fall back to a Home command');
+  }
+  {
+    const { api, element, commands, advanceTime } = setup();
+    api.bindEvents();
+    api.select('duo');
+    const img = element('screen-image');
+    img.naturalWidth = 100;
+    img.naturalHeight = 200;
+    img.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 200 });
+    img.setPointerCapture = () => {};
+    img.listeners.pointerdown({ button: 0, clientX: 10, clientY: 20, pointerId: 1, preventDefault() {} });
+    await flush();
+    assert.equal(commands.length, 1);
+    assert.deepEqual(JSON.parse(commands[0].options.body), { type: 'pointer_down', x: 10, y: 20 });
+    commands[0].body.resolve('{"sent":true}');
+    await flush();
+    advanceTime(25);
+    img.listeners.pointermove({ button: 0, clientX: 30, clientY: 40, pointerId: 1 });
+    await flush();
+    assert.equal(commands.length, 2);
+    assert.deepEqual(JSON.parse(commands[1].options.body), { type: 'pointer_move', x: 30, y: 40 });
+    commands[1].body.resolve('{"sent":true}');
+    await flush();
+    img.listeners.pointerup({ button: 0, clientX: 50, clientY: 60, pointerId: 1 });
+    await flush();
+    assert.equal(commands.length, 3);
+    assert.deepEqual(JSON.parse(commands[2].options.body), { type: 'pointer_up', x: 50, y: 60 });
+    commands[2].body.resolve('{"sent":true}');
+    await flush();
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 """

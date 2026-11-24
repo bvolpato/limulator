@@ -287,3 +287,91 @@ def test_oversized_uploads_still_require_authorized_loopback_origin_before_body_
     assert consumed == []
     assert spools == []
     assert service.installed == []
+
+
+def test_mjpeg_stream_delivers_multipart_jpeg_frames_and_skips_unchanged():
+    from limulator.service import StreamFrame
+
+    frames = [
+        StreamFrame(b"\xff\xd8frame1\xff\xd9", 4, 6, 0, changed=True),
+        StreamFrame(b"\xff\xd8frame1\xff\xd9", 4, 6, 0, changed=False),
+        StreamFrame(b"\xff\xd8frame2\xff\xd9", 4, 6, 0, changed=True),
+    ]
+    index = {"n": 0}
+
+    class StreamService(Service):
+        def capture_jpeg(self, *, quality=80, max_dim=None):
+            current = frames[min(index["n"], len(frames) - 1)]
+            index["n"] += 1
+            return current
+
+    with TestClient(
+        create_app(StreamService(), token="test-session-token"), base_url="http://127.0.0.1:8765"
+    ) as client:
+        response = client.get("/api/stream.mjpeg?fps=30&max_frames=2")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("multipart/x-mixed-replace; boundary=frame")
+        body = response.content
+        assert body.count(b"--frame\r\n") == 2
+        assert b"X-Limulator-Frame: 4x6:0\r\n" in body
+        assert b"\xff\xd8frame1\xff\xd9" in body
+        assert b"\xff\xd8frame2\xff\xd9" in body
+        assert index["n"] == 3
+
+
+def test_pointer_input_endpoints_validate_and_forward_events():
+    class PointerService(Service):
+        def pointer_down(self, x, y, frame_id):
+            self.inputs.append(("down", x, y, frame_id))
+            return {"sent": True}
+
+        def pointer_move(self, x, y, frame_id):
+            self.inputs.append(("move", x, y, frame_id))
+            return {"sent": True}
+
+        def pointer_up(self, x, y, frame_id):
+            self.inputs.append(("up", x, y, frame_id))
+            return {"sent": True}
+
+    service = PointerService()
+    headers = {"X-Limulator-Token": "test-session-token"}
+    with TestClient(
+        create_app(service, token="test-session-token"), base_url="http://127.0.0.1:8765"
+    ) as client:
+        assert (
+            client.post(
+                "/api/input",
+                headers=headers,
+                json={"type": "pointer_down", "x": 10, "y": 20, "frame_id": "4x6:0"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/input",
+                headers=headers,
+                json={"type": "pointer_move", "x": 15, "y": 25, "frame_id": "4x6:0"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/input",
+                headers=headers,
+                json={"type": "pointer_up", "x": 20, "y": 30, "frame_id": "4x6:0"},
+            ).status_code
+            == 200
+        )
+        assert client.post("/api/input", headers=headers, json={"type": "pointer_up"}).status_code == 200
+        # Partial coordinates on pointer_up are rejected.
+        assert (
+            client.post("/api/input", headers=headers, json={"type": "pointer_up", "x": 10}).status_code
+            == 422
+        )
+
+    assert service.inputs == [
+        ("down", 10, 20, "4x6:0"),
+        ("move", 15, 25, "4x6:0"),
+        ("up", 20, 30, "4x6:0"),
+        ("up", None, None, None),
+    ]

@@ -1208,6 +1208,7 @@ def test_scroll_reveals_offscreen_target_then_keeps_tap_semantic(tmp_path, monke
     assert result["activation_point"] == {"x": 50, "y": 75, "units": "points"}
     assert result["screen_points"] == {"width": 100, "height": 150}
     assert service.capture_paths[0] is None
+    assert len(service.screen_timeouts) == 1
     assert all(0 < timeout <= 30 for timeout in service.screen_timeouts + service.tree_timeouts)
 
 

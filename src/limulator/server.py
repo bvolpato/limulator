@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import secrets
 import tempfile
+import time
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+import anyio
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.datastructures import Headers
@@ -64,7 +67,7 @@ class InstallUploadLimit:
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
-    type: Literal["tap", "swipe", "text", "button"]
+    type: Literal["tap", "swipe", "text", "button", "pointer_down", "pointer_move", "pointer_up"]
     x: float = 0
     y: float = 0
     x0: float = 0
@@ -83,17 +86,25 @@ class Input(BaseModel):
             "swipe": {"x0", "y0", "x1", "y1"},
             "text": {"text"},
             "button": {"name"},
+            "pointer_down": {"x", "y"},
+            "pointer_move": {"x", "y"},
+            "pointer_up": set(),
         }[self.type]
         optional = {
             "tap": {"frame_id"},
             "swipe": {"duration_ms", "frame_id"},
             "text": set(),
             "button": set(),
+            "pointer_down": {"frame_id"},
+            "pointer_move": {"frame_id"},
+            "pointer_up": {"x", "y", "frame_id"},
         }[self.type]
         if not required <= self.model_fields_set:
             raise ValueError(f"{self.type} requires {', '.join(sorted(required))}")
         if self.model_fields_set - required - optional - {"type"}:
             raise ValueError(f"Unexpected fields for {self.type}")
+        if self.type == "pointer_up" and (("x" in self.model_fields_set) != ("y" in self.model_fields_set)):
+            raise ValueError("pointer_up requires both x and y when coordinates are provided")
         return self
 
 
@@ -214,6 +225,68 @@ def create_app(service: DeviceService, token: str | None = None, port: int = 876
             },
         )
 
+    @app.get("/api/stream.mjpeg")
+    async def stream_mjpeg(
+        request: Request,
+        device: str | None = None,
+        fps: float = Query(default=12.0, ge=1.0, le=30.0),
+        quality: int = Query(default=80, ge=20, le=95),
+        max_dim: int | None = Query(default=None, ge=64, le=4096),
+        max_frames: int | None = Query(default=None, ge=1, le=10000),
+    ):
+        target = selected(device)
+        active_interval = 1.0 / fps
+        idle_interval = min(0.5, max(active_interval * 3.0, 0.25))
+
+        async def frame_generator():
+            sent = 0
+            unchanged_streak = 0
+            while True:
+                if await request.is_disconnected():
+                    break
+                started = time.monotonic()
+                try:
+                    frame = await anyio.to_thread.run_sync(
+                        lambda: target.capture_jpeg(quality=quality, max_dim=max_dim)
+                    )
+                except (DeviceError, OSError, RuntimeError):
+                    break
+                if await request.is_disconnected():
+                    break
+                if sent == 0 or frame.changed:
+                    unchanged_streak = 0
+                    payload = frame.jpeg
+                    header = (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(payload)}\r\n".encode("ascii")
+                        + f"X-Limulator-Frame: {frame.identity}\r\n\r\n".encode("ascii")
+                    )
+                    yield header + payload + b"\r\n"
+                    sent += 1
+                    if max_frames is not None and sent >= max_frames:
+                        break
+                else:
+                    unchanged_streak += 1
+                elapsed = time.monotonic() - started
+                target_interval = (
+                    active_interval
+                    if unchanged_streak < 3
+                    else min(idle_interval, active_interval * (1.0 + unchanged_streak * 0.5))
+                )
+                sleep_for = target_interval - elapsed
+                if sleep_for > 0:
+                    await asyncio.sleep(sleep_for)
+
+        return StreamingResponse(
+            frame_generator(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.get("/api/apps")
     def apps(device: str | None = None):
         return {"apps": selected(device).apps()}
@@ -225,6 +298,14 @@ def create_app(service: DeviceService, token: str | None = None, port: int = 876
             return target.tap(event.x, event.y, event.frame_id)
         if event.type == "swipe":
             return target.swipe(event.x0, event.y0, event.x1, event.y1, event.duration_ms, event.frame_id)
+        if event.type == "pointer_down":
+            return target.pointer_down(event.x, event.y, event.frame_id)
+        if event.type == "pointer_move":
+            return target.pointer_move(event.x, event.y, event.frame_id)
+        if event.type == "pointer_up":
+            x = event.x if "x" in event.model_fields_set else None
+            y = event.y if "y" in event.model_fields_set else None
+            return target.pointer_up(x, y, event.frame_id)
         if event.type == "text":
             return target.text(event.text)
         if event.type == "button":

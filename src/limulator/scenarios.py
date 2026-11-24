@@ -475,16 +475,6 @@ def _safe_result(value: Any) -> Any:
     return value
 
 
-def _file_sha256(path: Path) -> tuple[str, int]:
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as stream:
-        while chunk := stream.read(1 << 20):
-            digest.update(chunk)
-            size += len(chunk)
-    return digest.hexdigest(), size
-
-
 def _capture(
     service: DeviceService,
     screenshots_dir: Path,
@@ -508,10 +498,9 @@ def _capture(
             raise ScenarioError("device capture returned invalid frame metadata")
         if not path.is_file():
             raise ScenarioError("device capture did not write the requested screenshot")
-        digest, size = _file_sha256(path)
-        expected_digest = hashlib.sha256(frame.png).hexdigest()
-        if size != len(frame.png) or digest != expected_digest:
+        if path.stat().st_size != len(frame.png):
             raise ScenarioError("captured screenshot file does not match the returned guest frame")
+        digest = hashlib.sha256(frame.png).hexdigest()
         return {
             "path": f"screenshots/{name}",
             "sha256": digest,
@@ -643,19 +632,20 @@ def _scroll_to_element(service: DeviceService, action: dict[str, Any]) -> dict:
             ) from last_readiness_error
         return value
 
+    screen = service.screen(timeout=remaining())
+    if not isinstance(screen, dict):
+        raise ScenarioError("Guest device.screen response must be an object")
+    try:
+        width, height = (
+            _number(screen.get("width"), "guest point width"),
+            _number(screen.get("height"), "guest point height"),
+        )
+    except ValueError as error:
+        raise ScenarioError(f"Guest returned invalid screen bounds: {error}") from error
+    if width <= 0 or height <= 0:
+        raise ScenarioError("Guest screen point bounds must be positive")
+
     while True:
-        screen = service.screen(timeout=remaining())
-        if not isinstance(screen, dict):
-            raise ScenarioError("Guest device.screen response must be an object")
-        try:
-            width, height = (
-                _number(screen.get("width"), "guest point width"),
-                _number(screen.get("height"), "guest point height"),
-            )
-        except ValueError as error:
-            raise ScenarioError(f"Guest returned invalid screen bounds: {error}") from error
-        if width <= 0 or height <= 0:
-            raise ScenarioError("Guest screen point bounds must be positive")
         try:
             tree = service.tree(timeout=remaining())
         except ProtocolError as error:

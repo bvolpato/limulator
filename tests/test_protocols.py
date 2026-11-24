@@ -415,7 +415,8 @@ def test_qmp_capture_keeps_png_default_and_supports_uncompressed_frames(tmp_path
 def test_qmp_handles_events_stale_ids_and_maps_passed_screen_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("limulator.protocols.time.sleep", lambda _seconds: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr("limulator.protocols.time.sleep", sleeps.append)
     commands: list[dict[str, object]] = []
 
     def handler(sock: socket.socket) -> None:
@@ -424,7 +425,7 @@ def test_qmp_handles_events_stale_ids_and_maps_passed_screen_size(
         commands.append(capabilities)
         _send_qmp(sock, {"event": "RESET", "data": {}})
         _send_qmp(sock, {"return": {}, "id": capabilities["id"]}, partial=True)
-        for _ in range(3):
+        for _ in range(2):
             command = _read_qmp_line(sock)
             commands.append(command)
             if len(commands) == 2:
@@ -441,13 +442,13 @@ def test_qmp_handles_events_stale_ids_and_maps_passed_screen_size(
     server.finish()
 
     assert commands[0]["execute"] == "qmp_capabilities"
-    position = commands[1]["arguments"]["events"]
-    assert position == [
+    assert commands[1]["arguments"]["events"] == [
         {"type": "abs", "data": {"axis": "x", "value": 8191}},
         {"type": "abs", "data": {"axis": "y", "value": 8191}},
+        {"type": "btn", "data": {"down": True, "button": "left"}},
     ]
-    assert commands[2]["arguments"]["events"] == [{"type": "btn", "data": {"down": True, "button": "left"}}]
-    assert commands[3]["arguments"]["events"] == [{"type": "btn", "data": {"down": False, "button": "left"}}]
+    assert commands[2]["arguments"]["events"] == [{"type": "btn", "data": {"down": False, "button": "left"}}]
+    assert sleeps == [0.04]
 
 
 def test_qmp_partial_response_line_obeys_one_command_deadline(tmp_path: Path) -> None:
@@ -490,8 +491,8 @@ def test_qmp_reports_remote_errors_and_releases_button_after_gesture_failure(
             except AssertionError:
                 return
             commands.append(command)
-            if command["id"] == 3:
-                _send_qmp(sock, {"error": {"class": "GenericError", "desc": "touch failed"}, "id": 3})
+            if command["id"] == 2:
+                _send_qmp(sock, {"error": {"class": "GenericError", "desc": "touch failed"}, "id": 2})
             else:
                 _send_qmp(sock, {"return": {}, "id": command["id"]})
 
@@ -501,8 +502,93 @@ def test_qmp_reports_remote_errors_and_releases_button_after_gesture_failure(
         client.tap(0, 0, 100, 100)
     server.finish()
 
-    assert [command["id"] for command in commands] == [2, 3, 4]
+    assert [command["id"] for command in commands] == [2, 3]
     assert commands[-1]["arguments"]["events"] == [{"type": "btn", "data": {"down": False, "button": "left"}}]
+    assert not client.broken
+
+
+def test_qmp_swipe_combines_initial_press_and_scales_steps_for_short_swipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events_log: list[tuple[str, object]] = []
+    monkeypatch.setattr("limulator.protocols.time.sleep", lambda s: events_log.append(("sleep", s)))
+    commands: list[dict[str, object]] = []
+
+    def handler(sock: socket.socket) -> None:
+        _send_qmp(sock, {"QMP": {"version": {}}})
+        capabilities = _read_qmp_line(sock)
+        _send_qmp(sock, {"return": {}, "id": capabilities["id"]})
+        while True:
+            try:
+                command = _read_qmp_line(sock)
+            except AssertionError:
+                return
+            commands.append(command)
+            events_log.append(("cmd", command["arguments"]["events"]))
+            _send_qmp(sock, {"return": {}, "id": command["id"]})
+
+    server = UnixServer(handler, tmp_path)
+    with QMPClient(server.path) as client:
+        client.swipe((0, 0), (50, 50), width=100, height=100, duration=0.05)
+    server.finish()
+
+    # 50ms at ~60Hz => 3 steps + initial combined down + final up = 5 QMP commands, 3 sleeps.
+    assert len(commands) == 5
+    assert commands[0]["arguments"]["events"] == [
+        {"type": "abs", "data": {"axis": "x", "value": 0}},
+        {"type": "abs", "data": {"axis": "y", "value": 0}},
+        {"type": "btn", "data": {"down": True, "button": "left"}},
+    ]
+    assert commands[-1]["arguments"]["events"] == [{"type": "btn", "data": {"down": False, "button": "left"}}]
+    # No trailing sleep between final move and button-up.
+    assert [kind for kind, _ in events_log[-2:]] == ["cmd", "cmd"]
+    sleeps = [value for kind, value in events_log if kind == "sleep"]
+    assert len(sleeps) == 3
+    assert sum(sleeps) == pytest.approx(0.05)
+
+
+def test_qmp_pointer_actions_send_direct_down_move_and_up_events(tmp_path: Path) -> None:
+    commands: list[dict[str, object]] = []
+
+    def handler(sock: socket.socket) -> None:
+        _send_qmp(sock, {"QMP": {"version": {}}})
+        capabilities = _read_qmp_line(sock)
+        _send_qmp(sock, {"return": {}, "id": capabilities["id"]})
+        while True:
+            try:
+                command = _read_qmp_line(sock)
+            except AssertionError:
+                return
+            commands.append(command)
+            _send_qmp(sock, {"return": {}, "id": command["id"]})
+
+    server = UnixServer(handler, tmp_path)
+    with QMPClient(server.path) as client:
+        client.pointer_down(10, 20, width=100, height=100)
+        client.pointer_move(30, 40, width=100, height=100)
+        client.pointer_up(50, 60, width=100, height=100)
+        client.pointer_up()
+        with pytest.raises(ValueError, match="pointer_up coordinates"):
+            client.pointer_up(x=10)
+    server.finish()
+
+    assert [cmd["arguments"]["events"] for cmd in commands] == [
+        [
+            {"type": "abs", "data": {"axis": "x", "value": 3276}},
+            {"type": "abs", "data": {"axis": "y", "value": 6553}},
+            {"type": "btn", "data": {"down": True, "button": "left"}},
+        ],
+        [
+            {"type": "abs", "data": {"axis": "x", "value": 9830}},
+            {"type": "abs", "data": {"axis": "y", "value": 13106}},
+        ],
+        [
+            {"type": "abs", "data": {"axis": "x", "value": 16383}},
+            {"type": "abs", "data": {"axis": "y", "value": 19660}},
+            {"type": "btn", "data": {"down": False, "button": "left"}},
+        ],
+        [{"type": "btn", "data": {"down": False, "button": "left"}}],
+    ]
 
 
 def test_qmp_rejects_out_of_bounds_coordinates_before_sending_input(

@@ -719,3 +719,108 @@ def test_status_returns_runtime_metadata_while_an_operation_holds_the_frame_lock
         finally:
             finish.set()
             holder.result(timeout=1)
+
+
+def test_capture_jpeg_skips_reencode_on_identical_frames_and_decouples_from_input(monkeypatch):
+    runtime = Runtime()
+    runtime.peer.pointer_events = []
+    runtime.peer.pointer_down = lambda *args: runtime.peer.pointer_events.append(("down", args))
+    runtime.peer.pointer_move = lambda *args: runtime.peer.pointer_events.append(("move", args))
+    runtime.peer.pointer_up = lambda *args: runtime.peer.pointer_events.append(("up", args))
+
+    service = DeviceService(runtime)
+    frombytes_calls = 0
+    real_frombytes = service_module.Image.frombytes
+
+    def counting_frombytes(*args, **kwargs):
+        nonlocal frombytes_calls
+        frombytes_calls += 1
+        return real_frombytes(*args, **kwargs)
+
+    monkeypatch.setattr(service_module.Image, "frombytes", counting_frombytes)
+
+    first = service.capture_jpeg(quality=80)
+    assert first.changed is True
+    assert first.jpeg[:2] == b"\xff\xd8"
+    assert frombytes_calls == 1
+
+    # Identical frame skips PIL decode and JPEG encode entirely.
+    second = service.capture_jpeg(quality=80)
+    assert second.changed is False
+    assert second.jpeg == first.jpeg
+    assert frombytes_calls == 1
+
+    # Changing pixels triggers a fresh encode.
+    runtime.peer.ppm_payload = _ppm_payload([[(1, 2, 3), (4, 5, 6)], [(7, 8, 9), (10, 11, 12)]])
+    third = service.capture_jpeg(quality=80)
+    assert third.changed is True
+    assert third.identity == "2x2:0"
+    assert frombytes_calls == 2
+
+    # Pointer events run cleanly against the geometry populated by capture_jpeg.
+    service.pointer_down(0, 1, third.identity)
+    service.pointer_move(1, 1, third.identity)
+    service.pointer_up(1, 0, third.identity)
+    service.pointer_up()
+    assert runtime.peer.pointer_events == [
+        ("down", (0, 1, 2, 2)),
+        ("move", (1, 1, 2, 2)),
+        ("up", (1, 0, 2, 2)),
+        ("up", ()),
+    ]
+
+
+def test_tap_probes_ppm_header_without_png_encoding(monkeypatch):
+    runtime = Runtime()
+    service = DeviceService(runtime)
+    monkeypatch.setattr(
+        service_module.Image,
+        "frombytes",
+        lambda *args, **kwargs: pytest.fail("CLI tap must not decode pixels or encode PNG"),
+    )
+
+    assert service.tap(1, 2) == {"sent": True}
+    assert runtime.peer.calls == [(1, 2, 4, 6)]
+    assert runtime.peer.capture_formats == ["ppm"]
+
+
+def test_capture_jpeg_does_not_block_tap_when_capture_lock_is_held():
+    runtime = Runtime()
+    service = DeviceService(runtime)
+    service.capture()
+    entered, release = threading.Event(), threading.Event()
+    original_screenshot = runtime.peer.screenshot
+
+    def slow_screenshot(path, *, image_format="png"):
+        entered.set()
+        assert release.wait(3)
+        return original_screenshot(path, image_format=image_format)
+
+    runtime.peer.screenshot = slow_screenshot
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        stream_future = pool.submit(service.capture_jpeg)
+        assert entered.wait(1)
+        try:
+            # Input must NOT raise "Device is busy" while capture_jpeg is in flight.
+            assert service.tap(1, 2, service._frame.identity) == {"sent": True}
+        finally:
+            release.set()
+        frame = stream_future.result(timeout=2)
+        assert frame.jpeg[:2] == b"\xff\xd8"
+
+
+def test_trim_services_applies_trimmed_profile_with_generative_allowlist():
+    runtime = Runtime()
+    service = DeviceService(runtime)
+    service.trim_services()
+    assert runtime.client.calls == [
+        (
+            "services.profile.apply",
+            {
+                "profile": "trimmed",
+                "allow": ["com.apple.generativeexperiencesd"],
+                "force": True,
+            },
+        )
+    ]
