@@ -111,23 +111,23 @@ def inspect_app(path: Path, guest_os: str | None = None) -> AppInfo:
 
 
 @contextmanager
-def prepared_ipa(path: Path) -> Iterator[tuple[Path, AppInfo]]:
+def prepared_ipa(path: Path, *, guest_os: str | None = None) -> Iterator[tuple[Path, AppInfo]]:
     """Yield an existing IPA or package an app bundle in a private temp dir."""
 
     artifact = Path(path)
     if artifact.suffix.lower() == ".ipa":
-        info = inspect_app(artifact)
+        info = inspect_app(artifact, guest_os=guest_os)
         yield info.path, info
         return
 
-    info = inspect_app(artifact)
+    info = inspect_app(artifact, guest_os=guest_os)
     if not info.path.is_dir() or info.path.suffix.lower() != ".app":
         raise AppError(f"Expected an iOS .app directory or .ipa file: {path}")
 
     with tempfile.TemporaryDirectory(prefix="limulator-ipa-") as temporary:
         ipa_path = Path(temporary) / f"{info.path.stem}.ipa"
         _package_app(info.path, ipa_path)
-        packaged = inspect_app(ipa_path)
+        packaged = inspect_app(ipa_path, guest_os=guest_os)
         yield ipa_path, packaged
 
 
@@ -743,22 +743,33 @@ def _sdk_from_plist(value: str | None) -> str | None:
 
 def _ipa_snapshot(project: Path) -> dict[Path, tuple[int, int, int, int]]:
     snapshot: dict[Path, tuple[int, int, int, int]] = {}
-    for current, directories, files in os.walk(project):
-        directories[:] = [directory for directory in directories if directory != ".git"]
-        for filename in files:
-            if Path(filename).suffix.lower() != ".ipa":
-                continue
-            path = Path(current) / filename
-            try:
-                metadata = path.lstat()
-            except OSError:
-                continue
-            snapshot[path] = (
-                metadata.st_dev,
-                metadata.st_ino,
-                metadata.st_size,
-                metadata.st_mtime_ns,
-            )
+    stack = [os.fspath(project)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    name = entry.name
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if is_dir:
+                        if name != ".git":
+                            stack.append(entry.path)
+                    elif name.lower().endswith(".ipa"):
+                        try:
+                            metadata = entry.stat(follow_symlinks=False)
+                        except OSError:
+                            continue
+                        snapshot[Path(entry.path)] = (
+                            metadata.st_dev,
+                            metadata.st_ino,
+                            metadata.st_size,
+                            metadata.st_mtime_ns,
+                        )
+        except OSError:
+            continue
     return snapshot
 
 
@@ -808,7 +819,7 @@ def _package_app(app_path: Path, ipa_path: Path) -> None:
             ipa_path,
             mode="w",
             compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6,
+            compresslevel=1,
             strict_timestamps=False,
         ) as archive:
             _write_zip_directory(archive, "Payload/", 0o755)

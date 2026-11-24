@@ -276,24 +276,75 @@ def _identity_alive(value: Any) -> bool:
     return value == _identity(value["pid"])
 
 
+def _pid_uses_disk(pid_text: str, target_dev: int, target_ino: int) -> bool:
+    try:
+        dfd = os.open(f"/proc/{pid_text}/fd", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return False
+    try:
+        with os.scandir(dfd) as entries:
+            for entry in entries:
+                try:
+                    info = os.stat(entry.name, dir_fd=dfd)
+                except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                    continue
+                if info.st_dev == target_dev and info.st_ino == target_ino:
+                    return True
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return False
+    finally:
+        os.close(dfd)
+    return False
+
+
 def _disk_users(disk: Path) -> list[int]:
     target = disk.stat()
-    users = []
-    for process in Path("/proc").iterdir():
-        if not process.name.isdigit() or int(process.name) == os.getpid():
-            continue
-        try:
-            for fd in (process / "fd").iterdir():
-                try:
-                    info = fd.stat()
-                except (FileNotFoundError, ProcessLookupError):
-                    continue
-                if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
-                    users.append(int(process.name))
-                    break
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
-            continue
+    target_dev, target_ino = target.st_dev, target.st_ino
+    self_pid = str(os.getpid())
+    users: list[int] = []
+    with os.scandir("/proc") as processes:
+        for process in processes:
+            name = process.name
+            if not name.isdigit() or name == self_pid:
+                continue
+            if _pid_uses_disk(name, target_dev, target_ino):
+                users.append(int(name))
     return users
+
+
+def _descendant_pids(root_pid: int) -> list[int] | None:
+    descendants: list[int] = []
+    queue = [root_pid]
+    seen = {root_pid}
+    saw_children_file = False
+    while queue:
+        pid = queue.pop()
+        try:
+            with os.scandir(f"/proc/{pid}/task") as tasks:
+                for task in tasks:
+                    try:
+                        with open(f"{task.path}/children", encoding="ascii") as stream:
+                            saw_children_file = True
+                            for token in stream.read().split():
+                                child = int(token)
+                                if child not in seen:
+                                    seen.add(child)
+                                    descendants.append(child)
+                                    queue.append(child)
+                    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+                        continue
+        except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            continue
+    return descendants if saw_children_file else None
+
+
+def _descendant_disk_users(disk: Path, root_pid: int) -> list[int]:
+    descendants = _descendant_pids(root_pid)
+    if descendants is None:
+        return [pid for pid in _disk_users(disk) if _is_descendant(pid, root_pid)]
+    target = disk.stat()
+    target_dev, target_ino = target.st_dev, target.st_ino
+    return [pid for pid in descendants if _pid_uses_disk(str(pid), target_dev, target_ino)]
 
 
 def _lock_disk(disk: Path) -> int:
@@ -635,16 +686,15 @@ def _supervise(args: argparse.Namespace) -> int:
             _atomic_json(runtime.runtime_path, metadata)
             while process.poll() is None:
                 if not _identity_alive(metadata.get("process")):
-                    for pid in _disk_users(device.vm_path / "Disk.img"):
-                        if _is_descendant(pid, os.getpid()):
-                            try:
-                                executable = Path(f"/proc/{pid}/exe").resolve().name
-                            except OSError:
-                                continue
-                            if executable.startswith("qemu-system-"):
-                                metadata["process"] = _identity(pid)
-                                _atomic_json(runtime.runtime_path, metadata)
-                                break
+                    for pid in _descendant_disk_users(device.vm_path / "Disk.img", os.getpid()):
+                        try:
+                            executable = Path(f"/proc/{pid}/exe").resolve().name
+                        except OSError:
+                            continue
+                        if executable.startswith("qemu-system-"):
+                            metadata["process"] = _identity(pid)
+                            _atomic_json(runtime.runtime_path, metadata)
+                            break
                 time.sleep(0.2)
             metadata["exit_code"] = process.returncode
             metadata["state"] = "stopped" if process.returncode == 0 else "error"
