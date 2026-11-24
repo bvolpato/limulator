@@ -149,7 +149,7 @@ build_qemu() {
   build_crypto
   local pkgcfg=$LIMULATOR_BACKEND/reims-vgpu/target/dist-vulkan/lib/pkgconfig
   export PKG_CONFIG_PATH=$pkgcfg:$PKG_CONFIG_PATH
-  local qemu_extra_cflags="-O3 -march=native -fno-zero-call-used-regs -ftrivial-auto-var-init=uninitialized"
+  local qemu_extra_cflags="-O3 -march=native -fzero-call-used-regs=skip -ftrivial-auto-var-init=uninitialized"
   mkdir -p "$LIMULATOR_BACKEND/qemu/build"
   (
     cd "$LIMULATOR_BACKEND/qemu/build"
