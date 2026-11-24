@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from PIL import Image
 
-from .applications import inspect_app, prepared_ipa
+from .applications import prepared_ipa
 from .lifecycle import Runtime
 from .profiles import profile_for, public_metadata
 from .protocols import ProtocolError
@@ -248,7 +248,7 @@ class DeviceService:
                         image.close()
                         image = rotated
                     encoded = io.BytesIO()
-                    image.save(encoded, format="PNG")
+                    image.save(encoded, format="PNG", compress_level=1)
                 finally:
                     image.close()
             self._frame = Frame(encoded.getvalue(), width, height, rotation)
@@ -494,8 +494,7 @@ class DeviceService:
 
     def install(self, path: Path) -> dict:
         with self._interaction():
-            info = inspect_app(path, guest_os=self.runtime.device.os_version)
-            with prepared_ipa(path) as (ipa, _):
+            with prepared_ipa(path, guest_os=self.runtime.device.os_version) as (ipa, info):
                 guest_path = f"/var/root/Library/Caches/limulator-{uuid.uuid4().hex}.ipa"
                 guest = self.runtime.guest(timeout=600)
                 guest.request_file("PUT", "/v1/files/content?path=" + quote(guest_path, safe=""), ipa)

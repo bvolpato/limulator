@@ -367,9 +367,13 @@ def test_prepared_ipa_packages_resources_and_preserves_executable_mode(
 def test_prepared_ipa_passes_through_existing_ipa(tmp_path: Path) -> None:
     ipa = _write_ipa(tmp_path / "counterlab.ipa")
 
-    with prepared_ipa(ipa) as (prepared, info):
+    with prepared_ipa(ipa, guest_os="17.0") as (prepared, info):
         assert prepared == ipa.resolve()
         assert info.bundle_id == "com.example.counterlab"
+
+    with pytest.raises(AppError, match="requires iOS 17.0"):
+        with prepared_ipa(ipa, guest_os="16.0"):
+            pytest.fail("incompatible IPA should not be yielded")
 
 
 def test_prepared_ipa_rejects_app_resource_symlink(tmp_path: Path) -> None:

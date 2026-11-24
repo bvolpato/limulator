@@ -289,6 +289,15 @@ def test_stale_pid_does_not_probe_or_stop_an_unrelated_process(device, tmp_path,
     assert lifecycle._identity_alive(actual)
 
 
+def test_descendant_disk_users_falls_back_when_proc_children_unavailable(device, monkeypatch):
+    disk = device.vm_path / "Disk.img"
+    monkeypatch.setattr(lifecycle, "_descendant_pids", lambda _root: None)
+    monkeypatch.setattr(lifecycle, "_disk_users", lambda _disk: [101, 202])
+    monkeypatch.setattr(lifecycle, "_is_descendant", lambda pid, root: pid == 202 and root == 42)
+
+    assert lifecycle._descendant_disk_users(disk, 42) == [202]
+
+
 def test_running_requires_successful_live_guest_health(device, tmp_path, monkeypatch):
     runtime = Runtime(Paths(tmp_path / "data"), device)
     runtime.runtime_path.parent.mkdir(parents=True)

@@ -159,10 +159,11 @@ class _SocketBuffer:
         self.buffer.extend(chunk)
 
     def read_line(self, maximum: int, *, what: str, deadline: float | None = None) -> bytes:
+        search_start = 0
         while True:
             if deadline is not None:
                 _remaining(deadline, f"reading {what}")
-            end = self.buffer.find(b"\n")
+            end = self.buffer.find(b"\n", search_start)
             if end >= 0:
                 if end + 1 > maximum:
                     raise ProtocolError(f"{what} exceeds {maximum} bytes")
@@ -171,6 +172,7 @@ class _SocketBuffer:
                 return line
             if len(self.buffer) >= maximum:
                 raise ProtocolError(f"{what} exceeds {maximum} bytes")
+            search_start = len(self.buffer)
             self._recv(deadline, what)
 
     def read_until(
@@ -181,10 +183,12 @@ class _SocketBuffer:
         what: str,
         deadline: float | None = None,
     ) -> bytes:
+        search_start = 0
+        overlap = max(0, len(marker) - 1)
         while True:
             if deadline is not None:
                 _remaining(deadline, f"reading {what}")
-            end = self.buffer.find(marker)
+            end = self.buffer.find(marker, search_start)
             if end >= 0:
                 frame_size = end + len(marker)
                 if frame_size > maximum:
@@ -194,20 +198,40 @@ class _SocketBuffer:
                 return frame
             if len(self.buffer) >= maximum:
                 raise ProtocolError(f"{what} exceeds {maximum} bytes")
+            search_start = max(0, len(self.buffer) - overlap)
             self._recv(deadline, what)
 
     def read_exactly(
         self, count: int, *, deadline: float | None = None, what: str = "response body"
     ) -> bytes:
-        while len(self.buffer) < count:
+        if len(self.buffer) >= count:
             if deadline is not None:
                 _remaining(deadline, f"reading {what}")
-            self._recv(deadline, what)
+            frame = bytes(self.buffer[:count])
+            del self.buffer[:count]
+            return frame
+        chunks: list[bytes] = []
+        received = len(self.buffer)
+        if received:
+            chunks.append(bytes(self.buffer))
+            self.buffer.clear()
+        while received < count:
+            if deadline is not None:
+                _set_socket_deadline(self.sock, deadline, f"reading {what}")
+            remaining = count - received
+            try:
+                chunk = self.sock.recv(min(1 << 20, remaining))
+            except TimeoutError as exc:
+                raise ProtocolError(f"timed out while reading {what}") from exc
+            except OSError as exc:
+                raise ProtocolError(f"socket read failed while reading {what}: {exc}") from exc
+            if not chunk:
+                raise ProtocolError("connection closed before the response was complete")
+            chunks.append(chunk)
+            received += len(chunk)
         if deadline is not None:
             _remaining(deadline, f"reading {what}")
-        frame = bytes(self.buffer[:count])
-        del self.buffer[:count]
-        return frame
+        return chunks[0] if len(chunks) == 1 else b"".join(chunks)
 
 
 class GuestClient:
