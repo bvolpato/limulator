@@ -263,3 +263,60 @@ def test_console_caches_each_named_devices_frame_without_polling_catalog(monkeyp
     assert catalog["devices"][0]["supports_fold"] is True
     assert catalog["devices"][1]["supports_fold"] is False
     assert "main_firmware" not in catalog["profiles"][0]
+
+
+def test_console_service_caches_device_by_json_and_plist_mtimes(monkeypatch, tmp_path):
+    import os
+    import plistlib
+
+    from limulator.lifecycle import Device, Registry
+
+    paths = Paths(tmp_path / "data")
+    vm = tmp_path / "vm"
+    vm.mkdir()
+    (vm / "Disk.img").write_bytes(b"disk")
+    plist_path = vm / "config.plist"
+    plist_path.write_bytes(plistlib.dumps({"platformType": "vresearch101", "diskImage": "Disk.img"}))
+    Registry(paths).register(Device("duo", vm, "iPhone19,4", "27.1"))
+
+    get_calls = 0
+    real_get = Registry.get
+
+    def counting_get(self, name):
+        nonlocal get_calls
+        get_calls += 1
+        return real_get(self, name)
+
+    monkeypatch.setattr(cli.Registry, "get", counting_get)
+    console = cli._ConsoleService("duo", paths)
+
+    first = console.for_device("duo")
+    second = console.for_device("duo")
+    assert first is second
+    assert get_calls == 1
+
+    # Touching config.plist invalidates the cache and forces re-validation.
+    stat_before = plist_path.stat()
+    os.utime(plist_path, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns + 1_000_000))
+    third = console.for_device("duo")
+    assert third is first
+    assert get_calls == 2
+
+    # Touching the device JSON invalidates the cache too.
+    json_path = paths.registry / "duo.json"
+    jstat = json_path.stat()
+    os.utime(json_path, ns=(jstat.st_atime_ns, jstat.st_mtime_ns + 1_000_000))
+    console.for_device("duo")
+    assert get_calls == 3
+
+
+def test_trim_command_calls_service_trim_services(monkeypatch, tmp_path, capsys):
+    service = Mock()
+    service.trim_services.return_value = {"profile": "trimmed", "stopped": 42}
+    monkeypatch.setattr(cli.Registry, "get", lambda self, name: object())
+    monkeypatch.setattr(cli, "Runtime", lambda paths, device: object())
+    monkeypatch.setattr(cli, "DeviceService", lambda runtime: service)
+
+    assert cli.main(["--data", str(tmp_path), "trim"]) == 0
+    service.trim_services.assert_called_once_with()
+    assert json.loads(capsys.readouterr().out) == {"profile": "trimmed", "stopped": 42}

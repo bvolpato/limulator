@@ -3,6 +3,8 @@
 (() => {
   const POLL_STATUS_MS = 2000;
   const POLL_SCREEN_MS = 1000;
+  const STREAM_FPS = 12;
+  const POINTER_MOVE_INTERVAL_MS = 20;
   const STATUS_TIMEOUT_MS = 10000;
   const APPS_TIMEOUT_MS = 75000;
   const SCREEN_TIMEOUT_MS = 12000;
@@ -12,7 +14,6 @@
   const UNLOCK_TIMEOUT_MS = 150000;
   const INSTALL_TIMEOUT_MS = 600000;
   const STOP_TIMEOUT_MS = 150000;
-  const TAP_SLOP_PX = 8;
 
   const byId = (id) => document.getElementById(id);
   const tokenMeta = document.querySelector('meta[name="limulator-token"]');
@@ -87,7 +88,10 @@
   let statusRequest = { current: null };
   let screenRequest = { current: null };
   let lastAppsDeviceKey = "";
-  let pointerStart = null;
+  let pointerState = null;
+  let pointerChain = Promise.resolve();
+  let streamActive = false;
+  let useMjpegStream = true;
   let catalog = { devices: [], profiles: [], default_device: "duo" };
   let selectedName = "";
   let selectedProfile = null;
@@ -127,7 +131,8 @@
     window.clearTimeout(statusTimer);
     window.clearTimeout(screenTimer);
     statusInFlight = screenInFlight = appsLoading = false;
-    pointerStart = null;
+    useMjpegStream = true;
+    cancelPointerState(false);
     clearScreen();
   }
 
@@ -474,6 +479,10 @@
   function scheduleScreen(delay = POLL_SCREEN_MS) {
     window.clearTimeout(screenTimer);
     if (document.hidden || operations.has(selectedName)) return;
+    if (useMjpegStream && deviceConnected()) {
+      if (!streamActive) startScreenStream();
+      return;
+    }
     screenTimer = window.setTimeout(pollScreen, delay);
   }
 
@@ -532,7 +541,7 @@
       statusError = screenError = appError = "";
       installedApps = [];
       lastAppsDeviceKey = "";
-      pointerStart = null;
+      cancelPointerState(false);
       syncOperation();
       clearScreen();
       showNotice("");
@@ -594,8 +603,6 @@
     const name = selectedName;
     const epoch = selectionEpoch;
     const requestRef = statusRequest;
-    const finishRead = beginRead(name);
-    let readError;
     statusInFlight = true;
     const previousCategory = currentCategory();
     const previousAppsKey = deviceAppsKey();
@@ -606,10 +613,12 @@
       if (!response.ok) throw new Error(readErrorMessage(body, response));
       if (!body || typeof body !== "object") throw new Error("The status endpoint returned an invalid response.");
       deviceStatus = body;
+      if (typeof body.device?.frame_id === "string" && body.device.frame_id) {
+        screenFrameId = body.device.frame_id;
+      }
       statusError = "";
       screenError = "";
     } catch (error) {
-      readError = error;
       if (!selectionIsCurrent(name, epoch)) return;
       if (!(document.hidden && error?.name === "AbortError")) {
         statusError = error instanceof Error ? error.message : String(error);
@@ -617,22 +626,62 @@
         clearScreen();
       }
     } finally {
-      finishRead(readError);
       if (!selectionIsCurrent(name, epoch)) return;
       statusInFlight = false;
       renderStatus();
       const category = currentCategory();
-      if (category === "connected" && (previousCategory !== "connected" || previousAppsKey !== deviceAppsKey())) {
-        lastAppsDeviceKey = deviceAppsKey();
-        void loadApps(false);
-      } else if (category !== "connected") {
+      if (category === "connected") {
+        if (useMjpegStream && !streamActive && !document.hidden && !operations.has(selectedName)) {
+          startScreenStream();
+        }
+        if (previousCategory !== "connected" || previousAppsKey !== deviceAppsKey()) {
+          lastAppsDeviceKey = deviceAppsKey();
+          void loadApps(false);
+        }
+      } else {
         lastAppsDeviceKey = "";
+        clearScreen();
       }
       scheduleStatus();
     }
   }
 
+  function stopScreenStream() {
+    if (!streamActive) return;
+    streamActive = false;
+    els.screenImage.onload = null;
+    els.screenImage.onerror = null;
+  }
+
+  function startScreenStream() {
+    if (streamActive || !useMjpegStream || document.hidden || !selectedName || !deviceConnected() || operations.has(selectedName)) {
+      return;
+    }
+    const name = selectedName;
+    const epoch = selectionEpoch;
+    streamActive = true;
+    els.screenImage.onload = () => {
+      if (!streamActive || !selectionIsCurrent(name, epoch) || document.hidden || !deviceConnected()) return;
+      els.screenImage.alt = `Live device screen preview, ${els.screenImage.naturalWidth} by ${els.screenImage.naturalHeight} pixels`;
+      els.screenImage.hidden = false;
+      els.screenEmpty.hidden = true;
+      screenError = "";
+      updateScreenResolution();
+      updateControls();
+    };
+    els.screenImage.onerror = () => {
+      if (!streamActive || !selectionIsCurrent(name, epoch)) return;
+      stopScreenStream();
+      useMjpegStream = false;
+      if (deviceConnected() && !document.hidden) {
+        scheduleScreen(0);
+      }
+    };
+    els.screenImage.src = deviceUrl(`/api/stream.mjpeg?fps=${STREAM_FPS}&ts=${Date.now()}`, name);
+  }
+
   function clearScreen() {
+    stopScreenStream();
     if (screenObjectUrl) {
       URL.revokeObjectURL(screenObjectUrl);
       screenObjectUrl = "";
@@ -735,8 +784,6 @@
     const name = selectedName;
     const epoch = selectionEpoch;
     const requestRef = appsRequest;
-    const finishRead = beginRead(name);
-    let readError;
     appsLoading = true;
     appError = "";
     updateAppsView();
@@ -751,13 +798,11 @@
         .filter((app) => app && typeof app.bundle_id === "string" && app.bundle_id.trim())
         .map((app) => ({ bundle_id: app.bundle_id.trim(), name: stringValue(app.name) }));
     } catch (error) {
-      readError = error;
       if (!selectionIsCurrent(name, epoch)) return;
       installedApps = [];
       appError = error instanceof Error ? error.message : String(error);
       if (showErrorNotice) showNotice(appError, true);
     } finally {
-      finishRead(readError);
       if (!selectionIsCurrent(name, epoch)) return;
       appsLoading = false;
       updateAppsView();
@@ -853,9 +898,9 @@
   }
 
   async function downloadScreen() {
-    if (!screenObjectUrl || els.screenImage.hidden) return;
+    if (els.screenImage.hidden || !selectedName) return;
     const link = document.createElement("a");
-    link.href = screenObjectUrl;
+    link.href = screenObjectUrl || deviceUrl(`/api/screen.png?ts=${Date.now()}`, selectedName);
     link.download = `limulator-screen-${Date.now()}.png`;
     document.body.append(link);
     link.click();
@@ -873,53 +918,137 @@
     return { x, y };
   }
 
+  function enqueuePointerInput(body, name, epoch) {
+    let headers;
+    try {
+      headers = { ...mutationHeaders(), "Content-Type": "application/json" };
+    } catch (error) {
+      showNotice(error.message, true);
+      return Promise.resolve(false);
+    }
+    const run = async () => {
+      if (!selectionIsCurrent(name, epoch) || !deviceConnected() || operations.has(name)) return false;
+      const requestRef = { current: null };
+      try {
+        const response = await fetchWithTimeout(deviceUrl("/api/input", name), {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        }, ACTION_TIMEOUT_MS, requestRef);
+        const result = await responseBody(response, requestRef);
+        if (!response.ok) throw new Error(readErrorMessage(result, response));
+        return true;
+      } catch (error) {
+        if (selectionIsCurrent(name, epoch)) {
+          showNotice(error instanceof Error ? error.message : String(error), true);
+        }
+        return false;
+      }
+    };
+    pointerChain = pointerChain.then(run, run);
+    return pointerChain;
+  }
+
+  function flushQueuedPointerMove(state) {
+    if (!state || pointerState !== state || !state.queuedMove) return;
+    if (state.moveInFlight) return;
+    const now = performance.now();
+    const wait = POINTER_MOVE_INTERVAL_MS - (now - state.lastSentAt);
+    if (wait > 0) {
+      if (!state.moveTimer) {
+        state.moveTimer = window.setTimeout(() => {
+          state.moveTimer = null;
+          flushQueuedPointerMove(state);
+        }, wait);
+      }
+      return;
+    }
+    const point = state.queuedMove;
+    state.queuedMove = null;
+    if (point.x === state.lastSentX && point.y === state.lastSentY) return;
+    state.lastSentAt = now;
+    state.lastSentX = point.x;
+    state.lastSentY = point.y;
+    state.moveInFlight = true;
+    const payload = {
+      type: "pointer_move",
+      x: point.x,
+      y: point.y,
+      ...(state.frameId ? { frame_id: state.frameId } : {}),
+    };
+    void enqueuePointerInput(payload, state.name, state.epoch).finally(() => {
+      state.moveInFlight = false;
+      if (pointerState === state && state.queuedMove) {
+        flushQueuedPointerMove(state);
+      }
+    });
+  }
+
+  function cancelPointerState(release = true) {
+    if (!pointerState) return;
+    const state = pointerState;
+    pointerState = null;
+    window.clearTimeout(state.moveTimer);
+    state.moveTimer = null;
+    state.queuedMove = null;
+    if (release) {
+      void enqueuePointerInput({ type: "pointer_up" }, state.name, state.epoch);
+    }
+  }
+
   function onScreenPointerDown(event) {
     if (!deviceConnected() || mutationInFlight || event.button !== 0) return;
     const point = pointForEvent(event);
     if (!point) return;
     event.preventDefault();
-    pointerStart = { ...point, frameId: screenFrameId, clientX: event.clientX, clientY: event.clientY, time: performance.now(), pointerId: event.pointerId };
+    cancelPointerState(true);
+    const frameId = screenFrameId;
+    const state = {
+      ...point,
+      frameId,
+      name: selectedName,
+      epoch: selectionEpoch,
+      pointerId: event.pointerId,
+      lastSentAt: performance.now(),
+      lastSentX: point.x,
+      lastSentY: point.y,
+      queuedMove: null,
+      moveTimer: null,
+      moveInFlight: false,
+    };
     try {
       els.screenImage.setPointerCapture(event.pointerId);
     } catch {
-      pointerStart = null;
+      return;
     }
+    pointerState = state;
+    void enqueuePointerInput(
+      { type: "pointer_down", x: point.x, y: point.y, ...(frameId ? { frame_id: frameId } : {}) },
+      state.name,
+      state.epoch,
+    );
+  }
+
+  function onScreenPointerMove(event) {
+    if (!pointerState || pointerState.pointerId !== event.pointerId) return;
+    const point = pointForEvent(event, true);
+    if (!point) return;
+    pointerState.queuedMove = point;
+    flushQueuedPointerMove(pointerState);
   }
 
   function onScreenPointerUp(event) {
-    if (!pointerStart || pointerStart.pointerId !== event.pointerId) return;
-    const start = pointerStart;
-    pointerStart = null;
-    if (start.frameId !== screenFrameId) {
-      showNotice("The display changed during the gesture. Try again on the current frame.", true);
-      return;
-    }
+    if (!pointerState || pointerState.pointerId !== event.pointerId) return;
+    const state = pointerState;
+    pointerState = null;
+    window.clearTimeout(state.moveTimer);
+    state.moveTimer = null;
+    state.queuedMove = null;
     const end = pointForEvent(event, true);
-    if (!end) return;
-
-    const deltaX = event.clientX - start.clientX;
-    const deltaY = event.clientY - start.clientY;
-    if (Math.hypot(deltaX, deltaY) < TAP_SLOP_PX) {
-      void mutate("/api/input", {
-        body: { type: "tap", x: start.x, y: start.y, ...(screenFrameId ? { frame_id: screenFrameId } : {}) },
-        pendingMessage: "Sending tap command…",
-        successMessage: "Tap command completed.",
-      });
-    } else {
-      void mutate("/api/input", {
-        body: {
-          type: "swipe",
-          x0: start.x,
-          y0: start.y,
-          x1: end.x,
-          y1: end.y,
-          duration_ms: Math.min(5000, Math.max(50, Math.round(performance.now() - start.time))),
-          ...(screenFrameId ? { frame_id: screenFrameId } : {}),
-        },
-        pendingMessage: "Sending swipe command…",
-        successMessage: "Swipe command completed.",
-      });
-    }
+    const payload = end && (!state.frameId || state.frameId === screenFrameId)
+      ? { type: "pointer_up", x: end.x, y: end.y, ...(state.frameId ? { frame_id: state.frameId } : {}) }
+      : { type: "pointer_up" };
+    void enqueuePointerInput(payload, state.name, state.epoch);
   }
 
   function onScreenKeyDown(event) {
@@ -1054,14 +1183,21 @@
     });
 
     els.screenImage.addEventListener("pointerdown", onScreenPointerDown);
+    els.screenImage.addEventListener("pointermove", onScreenPointerMove);
     els.screenImage.addEventListener("pointerup", onScreenPointerUp);
-    els.screenImage.addEventListener("pointercancel", () => { pointerStart = null; });
+    els.screenImage.addEventListener("pointercancel", () => cancelPointerState(true));
+    els.screenImage.addEventListener("lostpointercapture", () => cancelPointerState(true));
     els.screenImage.addEventListener("keydown", onScreenKeyDown);
 
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         window.clearTimeout(statusTimer);
         window.clearTimeout(screenTimer);
+        if (streamActive) {
+          stopScreenStream();
+          els.screenImage.removeAttribute("src");
+        }
+        cancelPointerState(true);
         return;
       }
       scheduleStatus(0);

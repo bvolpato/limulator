@@ -59,6 +59,10 @@ contained() {
   systemd-run --user --scope -p MemoryHigh=32G -p MemoryMax=40G -p MemorySwapMax=4G -- "$@"
 }
 build_deps() {
+  local extra_pkgs=()
+  if apt-cache show liburing-dev >/dev/null 2>&1; then
+    extra_pkgs+=(liburing-dev)
+  fi
   sudo apt-get install -y --no-install-recommends \
     git gcc g++ clang lld binutils make cmake ninja-build pkg-config autoconf automake libtool-bin \
     python3 python3-pil python3-setuptools rsync unzip curl zstd jq \
@@ -67,7 +71,8 @@ build_deps() {
     libdecor-0-dev libdrm-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev \
     socat hwdata sshfs fuse3 7zip bc flex bison libelf-dev device-tree-compiler \
     binutils-gold zip gnupg2 libpython3-dev libxml2-dev libncurses-dev libz3-dev libedit-dev libsqlite3-dev \
-    libusb-1.0-0-dev libssl-dev libcurl4-openssl-dev libarchive-dev "linux-headers-$(uname -r)"
+    libusb-1.0-0-dev libssl-dev libcurl4-openssl-dev libarchive-dev "linux-headers-$(uname -r)" \
+    "${extra_pkgs[@]}"
 }
 build_sources() {
   command -v uv >/dev/null || { echo 'uv is required to prepare pinned backend sources' >&2; return 1; }
@@ -134,18 +139,25 @@ build_signing() {
   tar -xzf "$archive" --strip-components=1 -C "$LIMULATOR_PREFIX/share/doc/rcodesign" "$folder/COPYING"
   "$LIMULATOR_PREFIX/bin/rcodesign" --version
 }
-build_gpu() { verify_sources; contained make -C "$LIMULATOR_BACKEND/reims-vgpu"; }
+build_gpu() {
+  verify_sources
+  contained env RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-C target-cpu=native" \
+    make -C "$LIMULATOR_BACKEND/reims-vgpu"
+}
 build_qemu() {
   verify_sources
   build_crypto
   local pkgcfg=$LIMULATOR_BACKEND/reims-vgpu/target/dist-vulkan/lib/pkgconfig
   export PKG_CONFIG_PATH=$pkgcfg:$PKG_CONFIG_PATH
+  local qemu_extra_cflags="-O3 -march=native -fzero-call-used-regs=skip -ftrivial-auto-var-init=uninitialized"
   mkdir -p "$LIMULATOR_BACKEND/qemu/build"
   (
     cd "$LIMULATOR_BACKEND/qemu/build"
     ../configure --target-list=aarch64-softmmu --enable-pvg --enable-lzfse \
       --enable-slirp --enable-libssh --enable-zstd --enable-nettle --enable-gnutls \
-      --enable-gtk --enable-sdl --disable-werror --disable-qom-cast-debug
+      --enable-gtk --enable-sdl --disable-werror --disable-qom-cast-debug \
+      --disable-debug-info --enable-lto --disable-stack-protector \
+      --extra-cflags="$qemu_extra_cflags"
     contained ninja -j"$LIMULATOR_JOBS" qemu-system-aarch64
   )
 }

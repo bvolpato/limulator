@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -47,19 +48,36 @@ KEY_NAMES = frozenset(
 
 
 _MAX_CAPTURE_PIXELS = 40_000_000
+_ROTATION_TRANSPOSE = {
+    90: Image.Transpose.ROTATE_270,
+    180: Image.Transpose.ROTATE_180,
+    270: Image.Transpose.ROTATE_90,
+}
 
 
-def _decode_qmp_ppm(path: Path) -> Image.Image:
-    """Decode QMP's P6 screenshot, stripping pixman's per-row alignment bytes."""
+def _parse_ppm_header(header: bytes) -> tuple[int, int]:
+    dimensions = re.fullmatch(rb"P6\n([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})\n255\n", header)
+    if dimensions is None:
+        raise DeviceError("QEMU returned an invalid PPM screenshot header")
+    width, height = (int(token) for token in dimensions.groups())
+    if width * height > _MAX_CAPTURE_PIXELS:
+        raise DeviceError("Guest framebuffer exceeds the supported capture size")
+    return width, height
+
+
+def _read_ppm_dimensions(path: Path) -> tuple[int, int]:
+    """Read only the 3-line P6 PPM header to obtain guest framebuffer dimensions."""
+    with path.open("rb") as stream:
+        header = b"".join(stream.readline(64) for _ in range(3))
+    return _parse_ppm_header(header)
+
+
+def _read_qmp_ppm_raw(path: Path) -> tuple[int, int, int, bytes]:
+    """Validate and read QMP's P6 screenshot, returning (width, height, stride, payload)."""
     with path.open("rb") as stream:
         # QEMU writes exactly these three lines. Bound parsing before reading pixels.
         header = b"".join(stream.readline(64) for _ in range(3))
-        dimensions = re.fullmatch(rb"P6\n([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})\n255\n", header)
-        if dimensions is None:
-            raise DeviceError("QEMU returned an invalid PPM screenshot header")
-        width, height = (int(token) for token in dimensions.groups())
-        if width * height > _MAX_CAPTURE_PIXELS:
-            raise DeviceError("Guest framebuffer exceeds the supported capture size")
+        width, height = _parse_ppm_header(header)
 
         row_bytes = width * 3
         aligned_row_bytes = (row_bytes + 3) & ~3
@@ -77,7 +95,22 @@ def _decode_qmp_ppm(path: Path) -> Image.Image:
         if len(payload) != payload_size:
             raise DeviceError("QEMU returned a truncated or malformed PPM framebuffer")
 
+    return width, height, stride, payload
+
+
+def _decode_qmp_ppm(path: Path) -> Image.Image:
+    """Decode QMP's P6 screenshot, stripping pixman's per-row alignment bytes."""
+    width, height, stride, payload = _read_qmp_ppm_raw(path)
     return Image.frombytes("RGB", (width, height), payload, "raw", "RGB", stride)
+
+
+def _transpose_rotation(image: Image.Image, rotation: int) -> Image.Image:
+    transpose = _ROTATION_TRANSPOSE.get(rotation)
+    if transpose is None:
+        return image
+    rotated = image.transpose(transpose)
+    image.close()
+    return rotated
 
 
 def device_metadata(device) -> dict:
@@ -130,6 +163,27 @@ class Frame:
         return x, y
 
 
+@dataclass(frozen=True)
+class StreamFrame:
+    jpeg: bytes
+    raw_width: int
+    raw_height: int
+    rotation: int
+    changed: bool = True
+
+    @property
+    def width(self) -> int:
+        return self.raw_height if self.rotation % 180 else self.raw_width
+
+    @property
+    def height(self) -> int:
+        return self.raw_width if self.rotation % 180 else self.raw_height
+
+    @property
+    def identity(self) -> str:
+        return f"{self.raw_width}x{self.raw_height}:{self.rotation}"
+
+
 def bundle_identifier(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", value):
         raise DeviceError("Invalid application bundle identifier")
@@ -142,12 +196,17 @@ class DeviceService:
     def __init__(self, runtime: Runtime):
         self.runtime = runtime
         self.lock = threading.RLock()
+        self._capture_lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._frame: Frame | None = None
         self._orientation: dict = {}
         self._orientation_at = 0.0
         self._needs_orientation = False
         self._lifecycle_lock = threading.Lock()
         self._lifecycle_state: str | None = None
+        self._last_png_key: tuple[bytes, int, int, int] | None = None
+        self._last_jpeg_key: tuple[bytes, int, int, int, int, int | None] | None = None
+        self._last_jpeg: bytes | None = None
 
     @property
     def supports_fold(self) -> bool:
@@ -168,6 +227,24 @@ class DeviceService:
         finally:
             self.lock.release()
 
+    @contextmanager
+    def _pointer_interaction(self, timeout: float = 1.0):
+        self._check_available()
+        if not self.lock.acquire(timeout=timeout):
+            raise DeviceError("Device is busy. Wait for its current operation to finish")
+        try:
+            self._check_available()
+            yield
+        finally:
+            self.lock.release()
+
+    def _clear_frame_cache(self) -> None:
+        with self._state_lock:
+            self._frame = None
+            self._last_png_key = None
+            self._last_jpeg_key = None
+            self._last_jpeg = None
+
     def _change_runtime(self, operation: str) -> dict:
         if not self._lifecycle_lock.acquire(blocking=False):
             raise DeviceError("A start or stop request is already in progress for this device")
@@ -177,7 +254,7 @@ class DeviceService:
             if not acquired:
                 raise DeviceError("Device is busy. Wait for its current operation to finish")
             self._lifecycle_state = "booting" if operation == "start" else "stopping"
-            self._frame = None
+            self._clear_frame_cache()
             self._orientation = {}
             self._orientation_at = 0
             self._needs_orientation = False
@@ -204,10 +281,17 @@ class DeviceService:
             return result
         if self.lock.acquire(blocking=False):
             try:
-                if self._frame:
-                    result["device"].update(width=self._frame.width, height=self._frame.height)
-                if "fold_angle" in self._orientation:
-                    result["device"]["fold_angle"] = self._orientation["fold_angle"]
+                with self._state_lock:
+                    frame = self._frame
+                    orientation = self._orientation
+                if frame:
+                    result["device"].update(
+                        width=frame.width,
+                        height=frame.height,
+                        frame_id=frame.identity,
+                    )
+                if "fold_angle" in orientation:
+                    result["device"]["fold_angle"] = orientation["fold_angle"]
             finally:
                 self.lock.release()
         return result
@@ -235,39 +319,106 @@ class DeviceService:
 
     def capture(self, output: Path | None = None) -> Frame:
         with self._interaction():
+            with self._capture_lock:
+                with tempfile.TemporaryDirectory(prefix="limulator-frame-") as temporary:
+                    raw = Path(temporary) / "screen.ppm"
+                    with self.runtime.qmp() as qmp:
+                        qmp.screenshot(raw, image_format="ppm")
+                    width, height, stride, payload = _read_qmp_ppm_raw(raw)
+                rotation = self._rotation()
+                digest = hashlib.blake2b(payload, digest_size=16).digest()
+                png_key = (digest, width, height, rotation)
+                with self._state_lock:
+                    cached = (
+                        self._frame
+                        if self._last_png_key == png_key and self._frame is not None and self._frame.png
+                        else None
+                    )
+                if cached is not None:
+                    frame = cached
+                else:
+                    image = Image.frombytes("RGB", (width, height), payload, "raw", "RGB", stride)
+                    try:
+                        image = _transpose_rotation(image, rotation)
+                        encoded = io.BytesIO()
+                        image.save(encoded, format="PNG", compress_level=1)
+                    finally:
+                        image.close()
+                    frame = Frame(encoded.getvalue(), width, height, rotation)
+                    with self._state_lock:
+                        self._frame = frame
+                        self._last_png_key = png_key
+                if output is not None:
+                    output = output.expanduser().resolve()
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    with output.open("xb") as stream:
+                        stream.write(frame.png)
+                return frame
+
+    def capture_jpeg(self, *, quality: int = 80, max_dim: int | None = None) -> StreamFrame:
+        """Capture a fast JPEG frame for live streaming, skipping PIL work when pixels are unchanged."""
+        if isinstance(quality, bool) or not isinstance(quality, int) or not 1 <= quality <= 95:
+            raise DeviceError("JPEG quality must be an integer between 1 and 95")
+        if max_dim is not None and (
+            isinstance(max_dim, bool) or not isinstance(max_dim, int) or max_dim < 64
+        ):
+            raise DeviceError("max_dim must be an integer of at least 64")
+        self._check_available()
+        with self._capture_lock:
+            self._check_available()
             with tempfile.TemporaryDirectory(prefix="limulator-frame-") as temporary:
                 raw = Path(temporary) / "screen.ppm"
                 with self.runtime.qmp() as qmp:
                     qmp.screenshot(raw, image_format="ppm")
-                image = _decode_qmp_ppm(raw)
-                try:
-                    width, height = image.size
-                    rotation = self._rotation()
-                    if rotation:
-                        rotated = image.rotate(-rotation, expand=True)
-                        image.close()
-                        image = rotated
-                    encoded = io.BytesIO()
-                    image.save(encoded, format="PNG", compress_level=1)
-                finally:
-                    image.close()
-            self._frame = Frame(encoded.getvalue(), width, height, rotation)
-            if output is not None:
-                output = output.expanduser().resolve()
-                output.parent.mkdir(parents=True, exist_ok=True)
-                with output.open("xb") as stream:
-                    stream.write(self._frame.png)
-            return self._frame
+                width, height, stride, payload = _read_qmp_ppm_raw(raw)
+            rotation = self._rotation()
+            digest = hashlib.blake2b(payload, digest_size=16).digest()
+            jpeg_key = (digest, width, height, rotation, quality, max_dim)
+            identity = f"{width}x{height}:{rotation}"
+            with self._state_lock:
+                if self._frame is None or self._frame.identity != identity:
+                    self._frame = Frame(b"", width, height, rotation)
+                    self._last_png_key = None
+                if self._last_jpeg_key == jpeg_key and self._last_jpeg is not None:
+                    return StreamFrame(self._last_jpeg, width, height, rotation, changed=False)
+            image = Image.frombytes("RGB", (width, height), payload, "raw", "RGB", stride)
+            try:
+                image = _transpose_rotation(image, rotation)
+                if max_dim is not None and max(image.size) > max_dim:
+                    image.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
+                encoded = io.BytesIO()
+                image.save(encoded, format="JPEG", quality=quality)
+                jpeg_bytes = encoded.getvalue()
+            finally:
+                image.close()
+            with self._state_lock:
+                self._last_jpeg_key = jpeg_key
+                self._last_jpeg = jpeg_bytes
+            return StreamFrame(jpeg_bytes, width, height, rotation, changed=True)
+
+    def _probe_geometry(self) -> Frame:
+        with tempfile.TemporaryDirectory(prefix="limulator-frame-") as temporary:
+            raw = Path(temporary) / "screen.ppm"
+            with self.runtime.qmp() as qmp:
+                qmp.screenshot(raw, image_format="ppm")
+            width, height = _read_ppm_dimensions(raw)
+        rotation = self._rotation()
+        frame = Frame(b"", width, height, rotation)
+        with self._state_lock:
+            self._frame = frame
+            self._last_png_key = None
+        return frame
 
     def _current_frame(self, identity: str | None) -> Frame:
-        if self._frame is None:
+        with self._state_lock:
+            frame = self._frame
+        if frame is None:
             if identity is not None:
                 raise DeviceError("The display changed. Refresh the screen before sending input")
-            self.capture()
-        assert self._frame is not None
-        if identity is not None and identity != self._frame.identity:
+            frame = self._probe_geometry()
+        if identity is not None and identity != frame.identity:
             raise DeviceError("Input refers to an older display size. Refresh the screen")
-        return self._frame
+        return frame
 
     def tap(self, x: float, y: float, frame_id: str | None = None) -> dict:
         with self._interaction():
@@ -275,6 +426,41 @@ class DeviceService:
             raw_x, raw_y = frame.raw_point(x, y)
             with self.runtime.qmp() as qmp:
                 qmp.tap(raw_x, raw_y, frame.raw_width, frame.raw_height)
+            return {"sent": True}
+
+    def pointer_down(self, x: float, y: float, frame_id: str | None = None) -> dict:
+        with self._pointer_interaction():
+            frame = self._current_frame(frame_id)
+            raw_x, raw_y = frame.raw_point(x, y)
+            with self.runtime.qmp() as qmp:
+                qmp.pointer_down(raw_x, raw_y, frame.raw_width, frame.raw_height)
+            return {"sent": True}
+
+    def pointer_move(self, x: float, y: float, frame_id: str | None = None) -> dict:
+        with self._pointer_interaction():
+            frame = self._current_frame(frame_id)
+            raw_x, raw_y = frame.raw_point(x, y)
+            with self.runtime.qmp() as qmp:
+                qmp.pointer_move(raw_x, raw_y, frame.raw_width, frame.raw_height)
+            return {"sent": True}
+
+    def pointer_up(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        frame_id: str | None = None,
+    ) -> dict:
+        with self._pointer_interaction():
+            if x is not None or y is not None:
+                if x is None or y is None:
+                    raise DeviceError("Pointer release requires both x and y when coordinates are provided")
+                frame = self._current_frame(frame_id)
+                raw_x, raw_y = frame.raw_point(x, y)
+                with self.runtime.qmp() as qmp:
+                    qmp.pointer_up(raw_x, raw_y, frame.raw_width, frame.raw_height)
+            else:
+                with self.runtime.qmp() as qmp:
+                    qmp.pointer_up()
             return {"sent": True}
 
     def tap_element(self, identifier: str, *, timeout: float = 60) -> dict:
@@ -327,7 +513,7 @@ class DeviceService:
         if position not in {"closed", "book", "open"}:
             raise DeviceError("Fold position must be closed, book, or open")
         with self._interaction():
-            self._frame = None
+            self._clear_frame_cache()
             self._orientation_at = 0
             self._needs_orientation = True
             guest = self.runtime.guest(timeout=60)
@@ -521,3 +707,18 @@ class DeviceService:
     def terminate(self, bundle_id: str) -> dict:
         self._check_available()
         return self.runtime.guest().rpc("apps.terminate", {"bundle_id": bundle_identifier(bundle_id)})
+
+    def trim_services(
+        self,
+        *,
+        profile: str = "trimmed",
+        allow: list[str] | None = None,
+        force: bool = True,
+    ) -> dict:
+        """Apply a trimmed guest launchd service profile to cut idle emulated CPU usage."""
+        allowed = ["com.apple.generativeexperiencesd"] if allow is None else list(allow)
+        with self._interaction():
+            return self.runtime.guest(timeout=120).rpc(
+                "services.profile.apply",
+                {"profile": profile, "allow": allowed, "force": force},
+            )

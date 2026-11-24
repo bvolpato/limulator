@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import functools
 import json
 import math
 import os
@@ -15,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -251,8 +253,93 @@ class Registry:
         return device
 
 
+@functools.lru_cache(maxsize=1)
 def _boot_id() -> str:
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
+_CPU_LIST = re.compile(r"^[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*$")
+
+
+def _parse_cache_size_bytes(raw: str) -> int | None:
+    text = raw.strip().upper()
+    if not text:
+        return None
+    multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3}
+    multiplier = 1
+    if text[-1] in multipliers:
+        multiplier = multipliers[text[-1]]
+        text = text[:-1]
+    if not text.isdigit():
+        return None
+    return int(text) * multiplier
+
+
+def _detect_best_cpu_set(sysfs_cpu_root: Path = Path("/sys/devices/system/cpu")) -> str | None:
+    """Return the CPU list of the largest L3 cache domain when asymmetric L3 caches exist."""
+    if not sys.platform.startswith("linux") and sysfs_cpu_root == Path("/sys/devices/system/cpu"):
+        return None
+    if not sysfs_cpu_root.is_dir():
+        return None
+    domains: dict[str, int] = {}
+    try:
+        entries = list(sysfs_cpu_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        name = entry.name
+        if not name.startswith("cpu") or not name[3:].isdigit():
+            continue
+        index3 = entry / "cache" / "index3"
+        try:
+            size_raw = (index3 / "size").read_text(encoding="ascii", errors="ignore")
+            shared_raw = (index3 / "shared_cpu_list").read_text(encoding="ascii", errors="ignore").strip()
+        except OSError:
+            continue
+        size_bytes = _parse_cache_size_bytes(size_raw)
+        if size_bytes is None or not shared_raw or not _CPU_LIST.fullmatch(shared_raw):
+            continue
+        domains[shared_raw] = max(domains.get(shared_raw, 0), size_bytes)
+    if len(domains) < 2:
+        return None
+    sizes = set(domains.values())
+    if len(sizes) < 2:
+        return None
+    max_size = max(sizes)
+    best = sorted(cpu_list for cpu_list, size in domains.items() if size == max_size)
+    return ",".join(best)
+
+
+def _git_head_signature(backend: Path) -> tuple[int, int | None] | None:
+    git_entry = backend / ".git"
+    try:
+        if git_entry.is_file():
+            text = git_entry.read_text(encoding="utf-8", errors="ignore").strip()
+            if not text.startswith("gitdir:"):
+                return None
+            git_dir = Path(text.split(":", 1)[1].strip())
+            if not git_dir.is_absolute():
+                git_dir = (backend / git_dir).resolve()
+        elif git_entry.is_dir():
+            git_dir = git_entry
+        else:
+            return None
+        head_path = git_dir / "HEAD"
+        head_mtime = head_path.stat().st_mtime_ns
+        head_text = head_path.read_text(encoding="utf-8", errors="ignore").strip()
+        ref_mtime: int | None = None
+        if head_text.startswith("ref:"):
+            ref_path = git_dir / head_text.split(":", 1)[1].strip()
+            try:
+                ref_mtime = ref_path.stat().st_mtime_ns
+            except OSError:
+                try:
+                    ref_mtime = (git_dir / "packed-refs").stat().st_mtime_ns
+                except OSError:
+                    ref_mtime = None
+        return (head_mtime, ref_mtime)
+    except OSError:
+        return None
 
 
 def _identity(pid: int) -> dict[str, Any] | None:
@@ -383,10 +470,98 @@ def _resource_guard() -> None:
         raise RuntimeError("guest startup requires at least 8 GiB free in /dev/shm")
 
 
+class _PersistentQMP:
+    """Thread-safe lease backed by a Runtime's persistent QMP connection."""
+
+    def __init__(self, runtime: Runtime, path: Path, process: dict[str, Any]) -> None:
+        self._runtime = runtime
+        self._path = path
+        self._process = process
+
+    def __enter__(self) -> _PersistentQMP:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        # Leave the underlying connection open for reuse; Runtime.stop/close_qmp closes it.
+        return None
+
+    def close(self) -> None:
+        return None
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        client, _ = self._runtime._acquire_qmp(self._path, self._process)
+        return client.events
+
+    @property
+    def greeting(self) -> dict[str, Any]:
+        client, _ = self._runtime._acquire_qmp(self._path, self._process)
+        return client.greeting
+
+    def _invoke(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        client, reused = self._runtime._acquire_qmp(self._path, self._process)
+        try:
+            return getattr(client, method)(*args, **kwargs)
+        except (ProtocolError, OSError) as exc:
+            if not isinstance(exc, OSError) and not client.broken and not client.closed:
+                raise
+            self._runtime._discard_qmp(client)
+            if not reused:
+                raise
+            client, _ = self._runtime._acquire_qmp(self._path, self._process)
+            return getattr(client, method)(*args, **kwargs)
+
+    def command(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        return self._invoke("command", name, arguments)
+
+    def screenshot(self, path: str | os.PathLike[str], *, image_format: str = "png") -> Any:
+        return self._invoke("screenshot", path, image_format=image_format)
+
+    def tap(self, x: float, y: float, width: float, height: float) -> None:
+        self._invoke("tap", x, y, width, height)
+
+    def swipe(
+        self,
+        start: tuple[float, float],
+        end: tuple[float, float],
+        width: float,
+        height: float,
+        duration: float = 0.3,
+        steps: int | None = None,
+    ) -> None:
+        self._invoke("swipe", start, end, width, height, duration=duration, steps=steps)
+
+    def pointer_down(self, x: float, y: float, width: float, height: float) -> None:
+        self._invoke("pointer_down", x, y, width, height)
+
+    def pointer_move(self, x: float, y: float, width: float, height: float) -> None:
+        self._invoke("pointer_move", x, y, width, height)
+
+    def pointer_up(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> None:
+        self._invoke("pointer_up", x, y, width, height)
+
+    def home(self) -> None:
+        self._invoke("home")
+
+
 class Runtime:
     def __init__(self, paths: Paths, device: Device) -> None:
         self.paths, self.device = paths, device
         self.runtime_path = paths.runs / device.name / "runtime.json"
+        self._qmp_lock = threading.RLock()
+        self._qmp_client: QMPClient | None = None
+        self._qmp_client_key: tuple[Path, dict[str, Any]] | None = None
+        self._backend_rev_cache: tuple[Path, tuple[int, int | None], str | None] | None = None
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
+            self.close_qmp()
 
     def _metadata(self) -> dict[str, Any]:
         value = _read_json(self.runtime_path) or {}
@@ -404,19 +579,65 @@ class Runtime:
             raise RuntimeError("runtime socket is outside this device's private directory")
         return directory / "qmp.sock"
 
+    def _acquire_qmp(self, path: Path, process: dict[str, Any]) -> tuple[QMPClient, bool]:
+        key = (path, process)
+        with self._qmp_lock:
+            existing = self._qmp_client
+            if (
+                existing is not None
+                and not existing.closed
+                and not existing.broken
+                and self._qmp_client_key == key
+            ):
+                return existing, True
+            if existing is not None:
+                existing.close()
+                self._qmp_client = None
+                self._qmp_client_key = None
+            client = QMPClient(path)
+            self._qmp_client = client
+            self._qmp_client_key = key
+            return client, False
+
+    def _discard_qmp(self, client: QMPClient) -> None:
+        with self._qmp_lock:
+            if self._qmp_client is client:
+                self._qmp_client = None
+                self._qmp_client_key = None
+        client.close()
+
+    def close_qmp(self) -> None:
+        with self._qmp_lock:
+            client = self._qmp_client
+            self._qmp_client = None
+            self._qmp_client_key = None
+        if client is not None:
+            client.close()
+
     def guest(self, timeout: float = 60) -> GuestClient:
         if not _identity_alive(self._metadata().get("process")):
             raise RuntimeError("device has no live owned QEMU process")
         return GuestClient(cid=self.device.cid, timeout=timeout)
 
-    def qmp(self) -> QMPClient:
+    def qmp(self) -> _PersistentQMP:
         value = self._metadata()
-        if not _identity_alive(value.get("process")):
+        process = value.get("process")
+        if not _identity_alive(process):
+            self.close_qmp()
             raise RuntimeError("device has no live owned QEMU process")
-        return QMPClient(self.qmp_path)
+        path = self.qmp_path
+        self._acquire_qmp(path, process)
+        return _PersistentQMP(self, path, process)
 
-    def status(self) -> dict[str, Any]:
-        backend = self.paths.backend
+    def _backend_revision(self, backend: Path) -> str | None:
+        if not backend.is_dir():
+            self._backend_rev_cache = None
+            return None
+        signature = _git_head_signature(backend)
+        if signature is not None:
+            cached = self._backend_rev_cache
+            if cached is not None and cached[0] == backend and cached[1] == signature:
+                return cached[2]
         try:
             revision = subprocess.check_output(
                 ["git", "-C", os.fspath(backend), "rev-parse", "HEAD"],
@@ -426,6 +647,15 @@ class Runtime:
             ).strip()
         except (OSError, subprocess.SubprocessError):
             revision = None
+        if signature is not None:
+            self._backend_rev_cache = (backend, signature, revision)
+        else:
+            self._backend_rev_cache = None
+        return revision
+
+    def status(self) -> dict[str, Any]:
+        backend = self.paths.backend
+        revision = self._backend_revision(backend)
         ready = (backend / "run-vphone.sh").is_file() and os.access(
             backend / "qemu/build/qemu-system-aarch64", os.X_OK
         )
@@ -554,6 +784,7 @@ class Runtime:
     def stop(self, timeout: float = 90) -> dict[str, Any]:
         if not math.isfinite(timeout) or timeout < 0:
             raise ValueError("timeout must be finite and nonnegative")
+        self.close_qmp()
         value = self._metadata()
         owned = value.get("process")
         if not _identity_alive(owned):
@@ -587,6 +818,7 @@ class Runtime:
         deadline = time.monotonic() + 3
         while _identity_alive(value.get("supervisor")) and time.monotonic() < deadline:
             time.sleep(0.05)
+        self.close_qmp()
         result = self.status()
         result["forced"] = forced
         if errors:
@@ -651,6 +883,10 @@ def _supervise(args: argparse.Namespace) -> int:
     )
     apply_graphics_environment(env, graphics_mode, run_dir / "census")
     env["TOOLBAR"] = "1" if args.window else "0"
+    if "VPHONE_CPUS" not in env:
+        best_cpus = _detect_best_cpu_set()
+        if best_cpus:
+            env["VPHONE_CPUS"] = best_cpus
     command = [
         "systemd-run",
         "--user",

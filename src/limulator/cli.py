@@ -139,13 +139,43 @@ class _ConsoleService:
         _validate_name(name)
         self.name, self.paths = name, paths
         self._services: dict[str, DeviceService] = {}
+        self._device_cache: dict[str, tuple[int, int, Device]] = {}
         self._lock = threading.Lock()
 
+    def _device_mtimes(self, name: str, device: Device) -> tuple[int, int] | None:
+        json_path = self.paths.registry / f"{name}.json"
+        vm_path = getattr(device, "vm_path", None)
+        if vm_path is None:
+            return None
+        try:
+            json_mtime = json_path.stat().st_mtime_ns
+            plist_mtime = (Path(vm_path) / "config.plist").stat().st_mtime_ns
+        except OSError:
+            return None
+        return (json_mtime, plist_mtime)
+
     def for_device(self, name: str) -> DeviceService:
+        _validate_name(name)
         with self._lock:
+            cached = self._device_cache.get(name)
+            if cached is not None:
+                cached_json_mtime, cached_plist_mtime, cached_device = cached
+                if self._device_mtimes(name, cached_device) == (cached_json_mtime, cached_plist_mtime):
+                    service = self._services.get(name)
+                    if service is not None and service.runtime.device == cached_device:
+                        return service
             device = Registry(self.paths).get(name)
+            mtimes = self._device_mtimes(name, device)
+            if mtimes is not None:
+                self._device_cache[name] = (mtimes[0], mtimes[1], device)
+            else:
+                self._device_cache.pop(name, None)
             service = self._services.get(name)
             if service is None or service.runtime.device != device:
+                if service is not None:
+                    close_qmp = getattr(service.runtime, "close_qmp", None)
+                    if callable(close_qmp):
+                        close_qmp()
                 service = DeviceService(Runtime(self.paths, device))
                 self._services[name] = service
             return service
@@ -257,6 +287,7 @@ def parser() -> argparse.ArgumentParser:
     fold = commands.add_parser("fold", help="change a Duo guest's posture")
     fold.add_argument("position", choices=("closed", "book", "open"))
     commands.add_parser("unlock", help="wake and unlock the guest")
+    commands.add_parser("trim", help="apply the trimmed guest service profile to reduce idle CPU")
     commands.add_parser("tree", help="read the native accessibility tree")
     scenario = commands.add_parser("test", help="run a JSON scenario against the real guest")
     scenario.add_argument("scenario", type=Path)
@@ -405,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
             result = service.fold(args.position)
         elif args.command == "unlock":
             result = service.unlock()
+        elif args.command == "trim":
+            result = service.trim_services()
         elif args.command == "tree":
             result = service.tree()
         elif args.command == "test":

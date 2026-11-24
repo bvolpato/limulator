@@ -490,3 +490,204 @@ server.close()
             owned = runtime._metadata().get("process")
             if lifecycle._identity_alive(owned):
                 os.kill(owned["pid"], 15)
+
+
+def test_runtime_qmp_reuses_persistent_connection_and_reconnects_on_drop(device, tmp_path):
+    import socket
+    import threading
+
+    paths = Paths(tmp_path / "data")
+    runtime = Runtime(paths, device)
+    run_dir = runtime.runtime_path.parent / "run-qmp"
+    run_dir.mkdir(parents=True)
+    qmp_sock = run_dir / "qmp.sock"
+    lifecycle._atomic_json(
+        runtime.runtime_path,
+        {
+            "name": device.name,
+            "run_dir": str(run_dir),
+            "process": lifecycle._identity(os.getpid()),
+        },
+    )
+
+    accepts = 0
+    commands_seen: list[str] = []
+    stop_event = threading.Event()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(qmp_sock))
+    listener.listen(4)
+    listener.settimeout(0.5)
+
+    def serve() -> None:
+        nonlocal accepts
+        while not stop_event.is_set():
+            try:
+                conn, _ = listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            accepts += 1
+            with conn, conn.makefile("rwb", buffering=0) as stream:
+                stream.write(b'{"QMP":{"version":{},"capabilities":[]}}\n')
+                for raw_line in stream:
+                    request = json.loads(raw_line)
+                    commands_seen.append(request["execute"])
+                    if request["execute"] == "drop-connection":
+                        break
+                    stream.write(
+                        (json.dumps({"return": {"ok": accepts}, "id": request["id"]}) + "\n").encode()
+                    )
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        with runtime.qmp() as qmp:
+            assert qmp.command("query-status") == {"ok": 1}
+        with runtime.qmp() as qmp:
+            assert qmp.command("query-status") == {"ok": 1}
+        # Only one socket connection and one qmp_capabilities handshake across both contexts.
+        assert accepts == 1
+        assert commands_seen == ["qmp_capabilities", "query-status", "query-status"]
+
+        # Trigger a peer disconnect; reused connection reconnects and retries once, then raises.
+        with pytest.raises(lifecycle.ProtocolError), runtime.qmp() as qmp:
+            qmp.command("drop-connection")
+        assert accepts == 2
+
+        # After a dropped peer, the next call reconnects cleanly on a fresh connection.
+        with runtime.qmp() as qmp:
+            assert qmp.command("query-status") == {"ok": 3}
+        assert accepts == 3
+        runtime.close_qmp()
+        assert runtime._qmp_client is None
+    finally:
+        stop_event.set()
+        listener.close()
+        thread.join(timeout=3)
+
+
+def test_runtime_qmp_auto_reconnects_within_single_call_after_silent_peer_close(device, tmp_path):
+    import socket
+    import threading
+
+    paths = Paths(tmp_path / "data")
+    runtime = Runtime(paths, device)
+    run_dir = runtime.runtime_path.parent / "run-qmp-silent"
+    run_dir.mkdir(parents=True)
+    qmp_sock = run_dir / "qmp.sock"
+    lifecycle._atomic_json(
+        runtime.runtime_path,
+        {
+            "name": device.name,
+            "run_dir": str(run_dir),
+            "process": lifecycle._identity(os.getpid()),
+        },
+    )
+
+    accepts = 0
+    stop_event = threading.Event()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(qmp_sock))
+    listener.listen(4)
+    listener.settimeout(0.5)
+
+    def serve() -> None:
+        nonlocal accepts
+        while not stop_event.is_set():
+            try:
+                conn, _ = listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            accepts += 1
+            with conn, conn.makefile("rwb", buffering=0) as stream:
+                stream.write(b'{"QMP":{"version":{},"capabilities":[]}}\n')
+                for raw_line in stream:
+                    request = json.loads(raw_line)
+                    stream.write(
+                        (json.dumps({"return": {"conn": accepts}, "id": request["id"]}) + "\n").encode()
+                    )
+                    if accepts == 1 and request["execute"] == "query-status":
+                        # Silently drop the socket after answering the first command.
+                        break
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        with runtime.qmp() as qmp:
+            assert qmp.command("query-status") == {"conn": 1}
+        # Allow server thread to close connection 1 while client still believes it is open.
+        time.sleep(0.05)
+        with runtime.qmp() as qmp:
+            # Automatically detects broken reused socket, reconnects, and succeeds!
+            assert qmp.command("query-status") == {"conn": 2}
+        assert accepts == 2
+        runtime.close_qmp()
+    finally:
+        stop_event.set()
+        listener.close()
+        thread.join(timeout=3)
+
+
+def test_detect_best_cpu_set_pins_amd_3d_vcache_ccd_and_ignores_symmetric_l3(tmp_path):
+    # Asymmetric AMD 9950X3D topology: 96 MiB CCD0 (0-7,16-23) vs 32 MiB CCD1 (8-15,24-31).
+    x3d_root = tmp_path / "x3d"
+    for cpu in range(8):
+        d = x3d_root / f"cpu{cpu}/cache/index3"
+        d.mkdir(parents=True)
+        (d / "size").write_text("98304K\n")
+        (d / "shared_cpu_list").write_text("0-7,16-23\n")
+    for cpu in range(8, 16):
+        d = x3d_root / f"cpu{cpu}/cache/index3"
+        d.mkdir(parents=True)
+        (d / "size").write_text("32768K\n")
+        (d / "shared_cpu_list").write_text("8-15,24-31\n")
+    assert lifecycle._detect_best_cpu_set(x3d_root) == "0-7,16-23"
+
+    # Symmetric dual-CCD topology: returns None.
+    sym_root = tmp_path / "sym"
+    for cpu, shared in [(0, "0-7"), (8, "8-15")]:
+        d = sym_root / f"cpu{cpu}/cache/index3"
+        d.mkdir(parents=True)
+        (d / "size").write_text("32768K\n")
+        (d / "shared_cpu_list").write_text(f"{shared}\n")
+    assert lifecycle._detect_best_cpu_set(sym_root) is None
+
+    # Single L3 domain: returns None.
+    single_root = tmp_path / "single"
+    d = single_root / "cpu0/cache/index3"
+    d.mkdir(parents=True)
+    (d / "size").write_text("36864K\n")
+    (d / "shared_cpu_list").write_text("0-15\n")
+    assert lifecycle._detect_best_cpu_set(single_root) is None
+
+
+def test_runtime_status_caches_backend_git_revision_by_head_mtime(device, tmp_path, monkeypatch):
+    backend = tmp_path / "backend"
+    git_dir = backend / ".git"
+    git_dir.mkdir(parents=True)
+    head = git_dir / "HEAD"
+    head.write_text("abc123\n")
+    monkeypatch.setenv("LIMULATOR_BACKEND", str(backend))
+
+    calls = 0
+
+    def fake_check_output(cmd, **kwargs):
+        nonlocal calls
+        calls += 1
+        return f"rev-{calls}\n"
+
+    monkeypatch.setattr(lifecycle.subprocess, "check_output", fake_check_output)
+    runtime = Runtime(Paths(tmp_path / "data"), device)
+
+    assert runtime.status()["backend"]["revision"] == "rev-1"
+    assert runtime.status()["backend"]["revision"] == "rev-1"
+    assert calls == 1
+
+    # Touching .git/HEAD with a newer mtime invalidates the cache.
+    stat_before = head.stat()
+    os.utime(head, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns + 1_000_000))
+    assert runtime.status()["backend"]["revision"] == "rev-2"
+    assert calls == 2
